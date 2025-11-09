@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException, Query
-from typing import List, Dict, Any, Optional
 import logging
 from datetime import datetime
+from typing import Dict, Any, Optional
 
 from app.services.mongodb_service import MongoDBService
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ async def get_trading_records(
             query,
             sort=[('date', -1), ('time', -1)]
         )
-        
+        logger.info("getting trading records: " + str(records))
         return {
             "records": records,
             "total": len(records)
@@ -79,7 +79,7 @@ async def update_trading_record(record_id: str, record: Dict[str, Any]):
         if success:
             return {"status": "success", "message": "Trading record updated"}
         else:
-            raise HTTPException(status_code=404, detail="Trading record not found")
+            raise HTTPException(status_code=404, detail="Trading record not found, id: " + record_id)
     except Exception as e:
         logger.error(f"Error updating trading record: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -97,3 +97,14 @@ async def delete_trading_record(record_id: str):
     except Exception as e:
         logger.error(f"Error deleting trading record: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/profit")
+async def get_trading_records_profit(
+        account: Optional[str] = None,
+        code: Optional[str] = None,
+        type: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+):
+    return 0

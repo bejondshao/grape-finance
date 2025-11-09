@@ -13,9 +13,35 @@ class TechnicalAnalysisService:
     def __init__(self):
         self.mongo_service = MongoDBService()
     
+    # async def calculate_cci(self, df: pd.DataFrame, period: int = 14, constant: float = 0.015) -> pd.Series:
+    #     """Calculate Commodity Channel Index"""
+    #     try:
+    #         tp = (df['high'] + df['low'] + df['close']) / 3
+    #         sma = tp.rolling(window=period).mean()
+    #         mad = tp.rolling(window=period).apply(
+    #             lambda x: np.abs(x - x.mean()).mean(), raw=False
+    #         )
+    #         cci = (tp - sma) / (constant * mad)
+    #         return cci
+    #     except Exception as e:
+    #         logger.error(f"Error calculating CCI: {str(e)}")
+    #         return pd.Series([np.nan] * len(df))
+
     async def calculate_cci(self, df: pd.DataFrame, period: int = 14, constant: float = 0.015) -> pd.Series:
         """Calculate Commodity Channel Index"""
         try:
+            # Convert columns to numeric, coercing errors to NaN
+            df.copy()
+            df['high'] = pd.to_numeric(df['high'], errors='coerce')
+            df['low'] = pd.to_numeric(df['low'], errors='coerce')
+            df['close'] = pd.to_numeric(df['close'], errors='coerce')
+
+            # Drop rows with NaN values that would break the calculation
+            df = df.dropna(subset=['high', 'low', 'close'])
+
+            if len(df) < period:
+                return pd.Series([np.nan] * len(df))
+
             tp = (df['high'] + df['low'] + df['close']) / 3
             sma = tp.rolling(window=period).mean()
             mad = tp.rolling(window=period).apply(
@@ -26,7 +52,7 @@ class TechnicalAnalysisService:
         except Exception as e:
             logger.error(f"Error calculating CCI: {str(e)}")
             return pd.Series([np.nan] * len(df))
-    
+
     async def calculate_technical_indicators(self, stock_code: str, df: pd.DataFrame):
         """Calculate all technical indicators for a stock"""
         try:

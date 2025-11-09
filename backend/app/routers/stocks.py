@@ -8,11 +8,23 @@ from app.services.mongodb_service import MongoDBService
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+def get_market_prefix(code):
+    """根据股票代码确定市场前缀"""
+    if code.startswith('6') or code.startswith('8'):
+        return 'sh'
+    elif code.startswith('3') or code.startswith('0'):
+        return 'sz'
+    elif code.startswith('4') or code.startswith('9'):
+        return 'bj'
+    else:
+        return 'sh'  # 默认上海
+
 @router.get("/")
 async def get_stocks(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    code: Optional[str] = None,
+    code: Optional[str] = "000300",
     name: Optional[str] = None,
     type: Optional[str] = None
 ):
@@ -27,16 +39,16 @@ async def get_stocks(
             query['code_name'] = {'$regex': name, '$options': 'i'}
         if type:
             query['type'] = type
-        
+        collection_name = 'stock_info' + "_sh_" + code
         stocks = await mongo_service.find(
-            'stock_info',
+            collection_name,
             query,
             sort=[('code', 1)],
-            skip=skip,
+            #skip=skip,
             limit=limit
         )
         
-        total = len(await mongo_service.find('stock_info', query))
+        total = len(await mongo_service.find(collection_name, query))
         
         return {
             "stocks": stocks,

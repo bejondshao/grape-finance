@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 
 from app.services.mongodb_service import MongoDBService
-from app.services.technical_analysis import TechnicalAnalysisService
+from app.services.technical_analysis_service import TechnicalAnalysisService
 from app.services.data_service import DataService
 
 router = APIRouter()
