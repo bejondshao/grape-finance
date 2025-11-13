@@ -328,7 +328,11 @@ class MongoDBService:
                         # 解析不带时间的格式
                         query['date']['$gte'] = datetime.strptime(start_date, "%Y-%m-%d")
                 else:
-                    query['date']['$gte'] = start_date
+                    # 检查是否为Timestamp对象并转换为datetime
+                    if hasattr(start_date, 'to_pydatetime'):
+                        query['date']['$gte'] = start_date.to_pydatetime()
+                    else:
+                        query['date']['$gte'] = start_date
             if end_date:
                 # 将字符串日期转换为datetime类型
                 if isinstance(end_date, str):
@@ -339,7 +343,11 @@ class MongoDBService:
                         # 解析不带时间的格式
                         query['date']['$lte'] = datetime.strptime(end_date, "%Y-%m-%d")
                 else:
-                    query['date']['$lte'] = end_date
+                    # 检查是否为Timestamp对象并转换为datetime
+                    if hasattr(end_date, 'to_pydatetime'):
+                        query['date']['$lte'] = end_date.to_pydatetime()
+                    else:
+                        query['date']['$lte'] = end_date
 
         # 构建投影
         projection = None
@@ -394,13 +402,13 @@ class MongoDBService:
         根据股票代码生成技术分析集合名称
         
         Args:
-            stock_code: 转换后的股票代码 sh_688819
-            
+            stock_code: 股票代码
+        
         Returns:
             str: 技术分析集合名称 (格式: technical_xx_123456)
         """
         # Normalize to lowercase for consistent case handling with stored codes
-        stock_code = stock_code.lower()
+        stock_code = stock_code.lower().replace('.', '_')
         return f"technical_{stock_code}"
     
     async def ensure_technical_collection_exists(self, stock_code: str) -> bool:

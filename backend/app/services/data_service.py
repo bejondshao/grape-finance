@@ -252,7 +252,7 @@ class DataService:
             logger.debug(f"DataFrame structure for {stock_code}: {df.shape}, columns: {df.columns.tolist()}")
             
             # Process and save data
-            collection_name = f"stock_daily_{stock_code}"
+            collection_name = self.mongo_service.get_collection_name(stock_code)
             operations = []
             
             for _, row in df.iterrows():

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 @router.get("/indicators")
 async def get_technical_indicators(
     stock_code: str,
-    indicator_type: str = Query(..., description="Technical indicator type (e.g., CCI)"),
+    indicator_type: Optional[str] = Query(None, description="Technical indicator type (e.g., CCI)"),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
 ):

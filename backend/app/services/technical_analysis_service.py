@@ -189,6 +189,195 @@ class TechnicalAnalysisService:
             else:
                 return pd.Series([np.nan])
 
+    async def calculate_rsi(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate Relative Strength Index (RSI)
+        
+        Args:
+            df: DataFrame containing close column
+            period: RSI calculation period, default 14
+            
+        Returns:
+            Series containing RSI values, index matches input DataFrame
+        """
+        try:
+            # Validate inputs
+            if not isinstance(df, pd.DataFrame):
+                raise TypeError("Input must be a pandas DataFrame")
+            if 'close' not in df.columns:
+                raise KeyError("Close column not found")
+            if period < 1:
+                raise ValueError("Period must be at least 1")
+            
+            # Convert close to numeric
+            df['close'] = pd.to_numeric(df['close'], errors='coerce')
+            
+            # Calculate price changes
+            delta = df['close'].diff()
+            delta = delta[1:]  # Drop first NaN
+            
+            # Separate gains and losses
+            gains = delta.where(delta > 0, 0)
+            losses = -delta.where(delta < 0, 0)
+            
+            # Calculate exponential moving averages
+            avg_gain = gains.ewm(span=period, adjust=False).mean()
+            avg_loss = losses.ewm(span=period, adjust=False).mean()
+            
+            # Calculate RSI
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            # Pad with NaNs to match original length
+            rsi_series = pd.Series(np.nan, index=df.index)
+            rsi_series.iloc[1:] = rsi
+            
+            return rsi_series
+        except Exception as e:
+            logger.error(f"Error calculating RSI: {str(e)}")
+            return pd.Series([np.nan] * len(df))
+
+    async def calculate_macd(self, df: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9) -> pd.DataFrame:
+        """Calculate Moving Average Convergence Divergence (MACD)
+        
+        Args:
+            df: DataFrame containing close column
+            fast_period: Fast EMA period, default 12
+            slow_period: Slow EMA period, default 26
+            signal_period: Signal EMA period, default 9
+            
+        Returns:
+            DataFrame containing MACD line, signal line, and histogram
+        """
+        try:
+            # Validate inputs
+            if not isinstance(df, pd.DataFrame):
+                raise TypeError("Input must be a pandas DataFrame")
+            if 'close' not in df.columns:
+                raise KeyError("Close column not found")
+            
+            # Convert close to numeric
+            df['close'] = pd.to_numeric(df['close'], errors='coerce')
+            
+            # Calculate EMAs
+            ema_fast = df['close'].ewm(span=fast_period, adjust=False).mean()
+            ema_slow = df['close'].ewm(span=slow_period, adjust=False).mean()
+            
+            # Calculate MACD line
+            macd_line = ema_fast - ema_slow
+            
+            # Calculate signal line
+            signal_line = macd_line.ewm(span=signal_period, adjust=False).mean()
+            
+            # Calculate histogram
+            macd_histogram = macd_line - signal_line
+            
+            return pd.DataFrame({
+                'macd_line': macd_line,
+                'signal_line': signal_line,
+                'macd_histogram': macd_histogram
+            }, index=df.index)
+        except Exception as e:
+            logger.error(f"Error calculating MACD: {str(e)}")
+            return pd.DataFrame({
+                'macd_line': [np.nan] * len(df),
+                'signal_line': [np.nan] * len(df),
+                'macd_histogram': [np.nan] * len(df)
+            }, index=df.index)
+
+    async def calculate_kdj(self, df: pd.DataFrame, period: int = 9, slow_k_period: int = 3, slow_d_period: int = 3) -> pd.DataFrame:
+        """Calculate KDJ indicator
+        
+        Args:
+            df: DataFrame containing high, low, close columns
+            period: KDJ calculation period, default 9
+            slow_k_period: Slow K period, default 3
+            slow_d_period: Slow D period, default 3
+            
+        Returns:
+            DataFrame containing K, D, J values
+        """
+        try:
+            # Validate inputs
+            if not isinstance(df, pd.DataFrame):
+                raise TypeError("Input must be a pandas DataFrame")
+            for col in ['high', 'low', 'close']:
+                if col not in df.columns:
+                    raise KeyError(f"{col} column not found")
+            
+            # Convert columns to numeric
+            df['high'] = pd.to_numeric(df['high'], errors='coerce')
+            df['low'] = pd.to_numeric(df['low'], errors='coerce')
+            df['close'] = pd.to_numeric(df['close'], errors='coerce')
+            
+            # Calculate highest high and lowest low
+            df['highest_high'] = df['high'].rolling(window=period).max()
+            df['lowest_low'] = df['low'].rolling(window=period).min()
+            
+            # Calculate RSV
+            rsv = (df['close'] - df['lowest_low']) / (df['highest_high'] - df['lowest_low']) * 100
+            
+            # Calculate KDJ
+            df['kdj_k'] = rsv.ewm(com=slow_k_period-1, adjust=False).mean()
+            df['kdj_d'] = df['kdj_k'].ewm(com=slow_d_period-1, adjust=False).mean()
+            df['kdj_j'] = 3 * df['kdj_k'] - 2 * df['kdj_d']
+            
+            return pd.DataFrame({
+                'kdj_k': df['kdj_k'],
+                'kdj_d': df['kdj_d'],
+                'kdj_j': df['kdj_j']
+            }, index=df.index)
+        except Exception as e:
+            logger.error(f"Error calculating KDJ: {str(e)}")
+            return pd.DataFrame({
+                'kdj_k': [np.nan] * len(df),
+                'kdj_d': [np.nan] * len(df),
+                'kdj_j': [np.nan] * len(df)
+            }, index=df.index)
+
+    async def calculate_bollinger_bands(self, df: pd.DataFrame, period: int = 20, num_std: int = 2) -> pd.DataFrame:
+        """Calculate Bollinger Bands
+        
+        Args:
+            df: DataFrame containing close column
+            period: Moving average period, default 20
+            num_std: Number of standard deviations, default 2
+            
+        Returns:
+            DataFrame containing upper, middle, lower bands
+        """
+        try:
+            # Validate inputs
+            if not isinstance(df, pd.DataFrame):
+                raise TypeError("Input must be a pandas DataFrame")
+            if 'close' not in df.columns:
+                raise KeyError("Close column not found")
+            
+            # Convert close to numeric
+            df['close'] = pd.to_numeric(df['close'], errors='coerce')
+            
+            # Calculate moving average
+            ma = df['close'].rolling(window=period).mean()
+            
+            # Calculate standard deviation
+            std = df['close'].rolling(window=period).std()
+            
+            # Calculate Bollinger Bands
+            upper = ma + (num_std * std)
+            lower = ma - (num_std * std)
+            
+            return pd.DataFrame({
+                'bb_upper': upper,
+                'bb_middle': ma,
+                'bb_lower': lower
+            }, index=df.index)
+        except Exception as e:
+            logger.error(f"Error calculating Bollinger Bands: {str(e)}")
+            return pd.DataFrame({
+                'bb_upper': [np.nan] * len(df),
+                'bb_middle': [np.nan] * len(df),
+                'bb_lower': [np.nan] * len(df)
+            }, index=df.index)
+
     async def calculate_technical_indicators(self, stock_code: str, df: pd.DataFrame) -> int:
         """Calculate all technical indicators for a stock and return the number of updated records"""
         try:
@@ -196,9 +385,13 @@ class TechnicalAnalysisService:
             stock_info = await self.mongo_service.find_one('stock_info', {'code': stock_code})
             cci_period, cci_constant = await self._get_cci_parameters(stock_info)
             
-            # Calculate CCI，传递股票代码以便在数据不足时获取历史数据
+            # Calculate indicators
             df_sorted = df.sort_values('date')
             cci_values = await self.calculate_cci(df_sorted, stock_code, cci_period, cci_constant)
+            rsi_values = await self.calculate_rsi(df_sorted, period=14)
+            macd_values = await self.calculate_macd(df_sorted)
+            kdj_values = await self.calculate_kdj(df_sorted)
+            bb_values = await self.calculate_bollinger_bands(df_sorted)
             
             # Save technical indicators
             collection_name = self.mongo_service.get_technical_collection_name(stock_code)
@@ -210,7 +403,15 @@ class TechnicalAnalysisService:
             
             for i, (idx, row) in enumerate(df_sorted.iterrows()):
                 if not pd.isna(cci_values.iloc[i]):
-                    current_date = row['date'] if isinstance(row['date'], datetime) else (datetime.strptime(row['date'], '%Y-%m-%d') if isinstance(row['date'], str) else row['date'])
+                    # Ensure current_date is a datetime object for comparison
+                    if isinstance(row['date'], pd.Timestamp):
+                        current_date = row['date'].to_pydatetime()
+                    elif isinstance(row['date'], datetime):
+                        current_date = row['date']
+                    elif isinstance(row['date'], str):
+                        current_date = datetime.strptime(row['date'], '%Y-%m-%d')
+                    else:
+                        current_date = row['date']
                     
                     # Only update records that are after the latest technical analysis date
                     if current_date > latest_tech_date:
@@ -220,6 +421,16 @@ class TechnicalAnalysisService:
                             'cci': float(cci_values.iloc[i]),
                             'cci_period': cci_period,
                             'cci_constant': cci_constant,
+                            'rsi': float(rsi_values.iloc[i]) if not pd.isna(rsi_values.iloc[i]) else None,
+                            'macd_line': float(macd_values['macd_line'].iloc[i]) if not pd.isna(macd_values['macd_line'].iloc[i]) else None,
+                            'macd_signal': float(macd_values['signal_line'].iloc[i]) if not pd.isna(macd_values['signal_line'].iloc[i]) else None,
+                            'macd_histogram': float(macd_values['macd_histogram'].iloc[i]) if not pd.isna(macd_values['macd_histogram'].iloc[i]) else None,
+                            'kdj_k': float(kdj_values['kdj_k'].iloc[i]) if not pd.isna(kdj_values['kdj_k'].iloc[i]) else None,
+                            'kdj_d': float(kdj_values['kdj_d'].iloc[i]) if not pd.isna(kdj_values['kdj_d'].iloc[i]) else None,
+                            'kdj_j': float(kdj_values['kdj_j'].iloc[i]) if not pd.isna(kdj_values['kdj_j'].iloc[i]) else None,
+                            'bb_upper': float(bb_values['bb_upper'].iloc[i]) if not pd.isna(bb_values['bb_upper'].iloc[i]) else None,
+                            'bb_middle': float(bb_values['bb_middle'].iloc[i]) if not pd.isna(bb_values['bb_middle'].iloc[i]) else None,
+                            'bb_lower': float(bb_values['bb_lower'].iloc[i]) if not pd.isna(bb_values['bb_lower'].iloc[i]) else None,
                             'updated_at': datetime.utcnow()
                         }
                         

@@ -19,7 +19,8 @@ import {
   TransactionOutlined,
   SettingOutlined,
   SyncOutlined,
-  UserOutlined
+  UserOutlined,
+  SearchOutlined
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 
@@ -54,6 +55,11 @@ const MainLayout = ({ children }) => {
       key: '/technical-analysis',
       icon: <LineChartOutlined />,
       label: 'Technical Analysis',
+    },
+    {
+      key: '/stock-view',
+      icon: <SearchOutlined />,
+      label: 'Stock View',
     },
     {
       key: '/trading-strategy',

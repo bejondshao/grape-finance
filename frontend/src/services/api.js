@@ -35,6 +35,7 @@ api.interceptors.response.use(
 export const stockService = {
   getStocks: (params) => api.get('/stocks', { params }),
   getStockHistory: (code, params) => api.get(`/stocks/${code}/daily`, { params }),
+  getStockIntegratedData: (code, params) => api.get(`/stocks/${code}/integrated-data`, { params }),
   triggerFetch: () => api.post('/stocks/trigger-fetch'),
   getFetchProgress: () => api.get('/stocks/fetch-progress'),
   updateStockCci: (params) => api.post('/technical/update-cci', params),
@@ -45,7 +46,7 @@ export const technicalAnalysisService = {
   createIndicator: (data) => api.post('/technical/config', data),
   updateIndicator: (id, data) => api.put(`/technical/config/${id}`, data),
   deleteIndicator: (id) => api.delete(`/technical/config/${id}`),
-  calculateCCI: (code, params) => api.get(`/technical/indicators`, { params: { ...params, stock_code: code, indicator_type: 'CCI' } }),
+  calculateIndicators: (code, params) => api.get(`/technical/indicators`, { params: { ...params, stock_code: code } }),
   updateAllStocksCci: () => api.post('/technical/update-all-cci'),
 }
 

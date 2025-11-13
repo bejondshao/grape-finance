@@ -9,6 +9,7 @@ import TradingStrategy from './pages/TradingStrategy'
 import TradingRecords from './pages/TradingRecords'
 import Configuration from './pages/Configuration'
 import DataFetch from './pages/DataFetch'
+import StockView from './pages/StockView'
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
         <Route path="/trading-records" element={<TradingRecords />} />
         <Route path="/configuration" element={<Configuration />} />
         <Route path="/data-fetch" element={<DataFetch />} />
+        <Route path="/stock-view" element={<StockView />} />
       </Routes>
     </MainLayout>
   )
