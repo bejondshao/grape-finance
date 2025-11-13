@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Pattern
+import re
 
 import motor.motor_asyncio
 from bson import ObjectId
@@ -221,6 +222,24 @@ class MongoDBService:
         except PyMongoError as e:
             logger.error(f"Error deleting document from {collection}: {str(e)}")
             return False
+    
+    async def count_documents(self, collection: str, query: Dict[str, Any] = None) -> int:
+        """统计集合中的文档数量"""
+        try:
+            # 检查集合是否存在
+            if collection not in await self.db.list_collection_names():
+                return 0
+            
+            # 转换ObjectId字符串
+            if query:
+                self.convert_string_to_objectid(query)
+            
+            # 执行计数
+            count = await self.db[collection].count_documents(query or {})
+            return count
+        except PyMongoError as e:
+            logger.error(f"Error counting documents in {collection}: {str(e)}")
+            return 0
 
     async def get_config_value(self, category: str, sub_category: str, key: str,
                                default: Any = None) -> Any:
@@ -261,3 +280,182 @@ class MongoDBService:
         except PyMongoError as e:
             logger.error(f"Error setting config value {category}.{sub_category}.{key}: {str(e)}")
             return False
+
+    def get_collection_name(self, stock_code: str) -> str:
+
+        return f"stock_daily_{stock_code}"
+
+    def parse_collection_name(self, collection_name: str) -> Dict[str, str]:
+        """解析表名，提取市场信息和股票代码"""
+        pattern: Pattern = r"stock_daily_([a-z]{2})_(\d+)"
+        match = re.match(pattern, collection_name)
+        if match:
+            return {
+                "market": match.group(1),
+                "code": match.group(2)
+            }
+        return {}
+
+    async def get_stock_history(
+            self,
+            stock_code: str,
+            start_date: Optional[str] = None,
+            end_date: Optional[str] = None,
+            limit: int = 100,
+            skip: int = 0,
+            sort: str = "desc",
+            fields: Optional[List[str]] = None
+    ) -> List[Dict]:
+        """获取单个股票的历史数据"""
+        collection_name = self.get_collection_name(stock_code)
+
+        # 跳过集合存在性检查，直接查询数据
+        # 这样可以避免list_collection_names()无法正确识别包含.的集合名称的问题
+
+        collection = self.db[collection_name]
+
+        # 构建查询条件
+        query = {}
+        if start_date or end_date:
+            query['date'] = {}
+            if start_date:
+                # 将字符串日期转换为datetime类型
+                if isinstance(start_date, str):
+                    try:
+                        # 尝试解析带时间的格式
+                        query['date']['$gte'] = datetime.strptime(start_date, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        # 解析不带时间的格式
+                        query['date']['$gte'] = datetime.strptime(start_date, "%Y-%m-%d")
+                else:
+                    query['date']['$gte'] = start_date
+            if end_date:
+                # 将字符串日期转换为datetime类型
+                if isinstance(end_date, str):
+                    try:
+                        # 尝试解析带时间的格式
+                        query['date']['$lte'] = datetime.strptime(end_date, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        # 解析不带时间的格式
+                        query['date']['$lte'] = datetime.strptime(end_date, "%Y-%m-%d")
+                else:
+                    query['date']['$lte'] = end_date
+
+        # 构建投影
+        projection = None
+        if fields:
+            projection = {field: 1 for field in fields}
+            projection['_id'] = 0  # 总是排除_id
+
+        # 排序方向
+        sort_direction = DESCENDING if sort == "desc" else ASCENDING
+
+        try:
+            # 执行查询
+            cursor = collection.find(query, projection).sort('date', sort_direction).skip(skip).limit(limit)
+            results = await cursor.to_list(length=None)
+
+            # 移除内部字段
+            for doc in results:
+                doc.pop('_id', None)
+                doc.pop('created_at', None)
+
+            return results
+        except PyMongoError as e:
+            logger.error(f"Error fetching stock history for {stock_code}: {str(e)}")
+            return []
+    
+    async def get_all_stocks(self) -> List[Dict[str, Any]]:
+        """
+        从stock_info集合获取所有股票列表
+        
+        Returns:
+            List[Dict]: 包含股票基本信息的列表，每个元素包含code字段
+        """
+        try:
+            # 检查stock_info集合是否存在
+            if 'stock_info' not in await self.db.list_collection_names():
+                logger.warning("Collection stock_info does not exist")
+                return []
+            
+            # 投影只获取code字段
+            projection = {"code": 1, "_id": 0}
+            
+            # 查询所有股票信息
+            stocks = await self.db.stock_info.find({}, projection).to_list(length=None)
+            
+            return stocks
+        except PyMongoError as e:
+            logger.error(f"Error fetching all stocks from stock_info: {str(e)}")
+            return []
+    
+    def get_technical_collection_name(self, stock_code: str) -> str:
+        """
+        根据股票代码生成技术分析集合名称
+        
+        Args:
+            stock_code: 转换后的股票代码 sh_688819
+            
+        Returns:
+            str: 技术分析集合名称 (格式: technical_xx_123456)
+        """
+        # Normalize to lowercase for consistent case handling with stored codes
+        stock_code = stock_code.lower()
+        return f"technical_{stock_code}"
+    
+    async def ensure_technical_collection_exists(self, stock_code: str) -> bool:
+        """
+        确保技术分析集合存在，如果不存在则创建
+        
+        Args:
+            stock_code: 股票代码
+            
+        Returns:
+            bool: 操作是否成功
+        """
+        try:
+            collection_name = self.get_technical_collection_name(stock_code)
+            
+            # 检查集合是否存在
+            if collection_name not in await self.db.list_collection_names():
+                # 创建新集合
+                await self.db.create_collection(collection_name)
+                # 添加日期索引
+                await self.db[collection_name].create_index([("date", ASCENDING)], unique=True)
+                logger.info(f"Created technical analysis collection: {collection_name}")
+            
+            return True
+        except PyMongoError as e:
+            logger.error(f"Error ensuring technical collection for {stock_code}: {str(e)}")
+            return False
+    
+    async def get_latest_technical_date(self, stock_code: str) -> Optional[str]:
+        """
+        获取股票技术分析集合中的最新日期
+        
+        Args:
+            stock_code: 股票代码
+            
+        Returns:
+            Optional[str]: 最新日期字符串，如果集合不存在或为空则返回None
+        """
+        try:
+            collection_name = self.get_technical_collection_name(stock_code)
+            logger.debug(f"Getting latest technical date for {stock_code}, collection: {collection_name}")
+            
+            # 查询最新的日期
+            latest = await self.db[collection_name].find_one(
+                {}, 
+                projection={"date": 1, "_id": 0}, 
+                sort=[("date", DESCENDING)]
+            )
+            
+            if latest:
+                date_str = latest.get("date").strftime("%Y-%m-%d %H:%M:%S") if latest.get("date") else None
+                logger.debug(f"Latest technical date for {stock_code}: {date_str}")
+                return date_str
+            logger.debug(f"No latest technical date found for {stock_code}")
+            return None
+        except PyMongoError as e:
+            logger.error(f"Error getting latest technical date for {stock_code}: {str(e)}")
+            return None

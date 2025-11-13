@@ -37,14 +37,16 @@ export const stockService = {
   getStockHistory: (code, params) => api.get(`/stocks/${code}/daily`, { params }),
   triggerFetch: () => api.post('/stocks/trigger-fetch'),
   getFetchProgress: () => api.get('/stocks/fetch-progress'),
+  updateStockCci: (params) => api.post('/technical/update-cci', params),
 }
 
 export const technicalAnalysisService = {
-  getIndicators: () => api.get('/technical-analysis'),
-  createIndicator: (data) => api.post('/technical-analysis', data),
-  updateIndicator: (id, data) => api.put(`/technical-analysis/${id}`, data),
-  deleteIndicator: (id) => api.delete(`/technical-analysis/${id}`),
-  calculateCCI: (code, params) => api.get(`/technical-analysis/${code}/cci`, { params }),
+  getIndicators: () => api.get('/technical/indicators'),
+  createIndicator: (data) => api.post('/technical/config', data),
+  updateIndicator: (id, data) => api.put(`/technical/config/${id}`, data),
+  deleteIndicator: (id) => api.delete(`/technical/config/${id}`),
+  calculateCCI: (code, params) => api.get(`/technical/indicators`, { params: { ...params, stock_code: code, indicator_type: 'CCI' } }),
+  updateAllStocksCci: () => api.post('/technical/update-all-cci'),
 }
 
 export const tradingStrategyService = {

@@ -2,7 +2,7 @@ import logging
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from pymongo import UpdateOne
 
 from app.services.mongodb_service import MongoDBService
@@ -27,73 +27,235 @@ class TechnicalAnalysisService:
     #         logger.error(f"Error calculating CCI: {str(e)}")
     #         return pd.Series([np.nan] * len(df))
 
-    async def calculate_cci(self, df: pd.DataFrame, period: int = 14, constant: float = 0.015) -> pd.Series:
-        """Calculate Commodity Channel Index"""
+    async def calculate_cci(self, df: pd.DataFrame, stock_code: str = None, period: int = 14, constant: float = 0.015) -> pd.Series:
+        """Calculate Commodity Channel Index
+        
+        Args:
+            df: 包含high, low, close列的DataFrame
+            stock_code: 股票代码，当数据不足时用于从数据库获取历史数据
+            period: CCI计算周期，默认为14
+            constant: 缩放常数，默认为0.015
+            
+        Returns:
+            包含CCI值的Series，索引与输入DataFrame匹配
+        """
         try:
-            # Convert columns to numeric, coercing errors to NaN
-            df.copy()
-            df['high'] = pd.to_numeric(df['high'], errors='coerce')
-            df['low'] = pd.to_numeric(df['low'], errors='coerce')
-            df['close'] = pd.to_numeric(df['close'], errors='coerce')
-
-            # Drop rows with NaN values that would break the calculation
-            df = df.dropna(subset=['high', 'low', 'close'])
-
-            if len(df) < period:
-                return pd.Series([np.nan] * len(df))
-
-            tp = (df['high'] + df['low'] + df['close']) / 3
+            # 参数验证
+            if not isinstance(df, pd.DataFrame):
+                raise TypeError("Input must be a pandas DataFrame")
+            
+            if period < 1:
+                raise ValueError("Period must be at least 1")
+            
+            if constant <= 0:
+                raise ValueError("Constant must be positive")
+            
+            # 检查必需列
+            required_columns = ['high', 'low', 'close']
+            for col in required_columns:
+                if col not in df.columns:
+                    raise KeyError(f"Required column '{col}' not found in DataFrame")
+            
+            # 创建DataFrame副本以避免修改原始数据
+            df_copy = df.copy()
+            logger.info(f"calculate_cci received {len(df_copy)} records with columns: {list(df_copy.columns)}")
+            
+            # 转换列为数值类型，错误转换为NaN
+            for col in required_columns:
+                df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce')
+            
+            # 记录转换后的非数值行数量
+            non_numeric_rows = df_copy[df_copy[required_columns].isna().any(axis=1)]
+            if len(non_numeric_rows) > 0:
+                logger.warning(f"Found {len(non_numeric_rows)} rows with non-numeric price data")
+            
+            # 初始化结果Series，确保索引与原始DataFrame匹配
+            result = pd.Series([np.nan] * len(df), index=df.index)
+            
+            # 检查数据是否足够计算
+            logger.info(f"Current data size after cleaning: {len(df_copy)}, required: {period}")
+            if len(df_copy) < period:
+                # 如果提供了股票代码，尝试从数据库获取历史数据补充
+                if stock_code:
+                    try:
+                        logger.info(f"Attempting to fetch additional historical data for {stock_code}")
+                        
+                        # 计算需要补充的数据量
+                        additional_data_needed = period - len(df_copy)
+                        
+                        # 获取补充的历史数据
+                        # 假设df中的数据是按日期排序的，我们需要获取更早的数据
+                        if not df.empty and 'date' in df.columns:
+                            # 获取df中最早的日期作为结束日期，往前获取数据
+                            earliest_date = df['date'].min()
+                            if isinstance(earliest_date, datetime):
+                                end_date_str = earliest_date.strftime('%Y-%m-%d')
+                            else:
+                                end_date_str = str(earliest_date)
+                            
+                            # 从数据库获取历史数据，需要比period多一些以确保有足够的数据
+                            historical_data = await self.mongo_service.get_stock_history(
+                                stock_code=stock_code,
+                                end_date=end_date_str,
+                                limit=additional_data_needed * 2,  # 获取更多数据以确保有足够的有效数据
+                                sort="desc"  # 降序排列，最新的数据在前
+                            )
+                        else:
+                            # 如果df中没有日期信息，直接获取最近的数据
+                            historical_data = await self.mongo_service.get_stock_history(
+                                stock_code=stock_code,
+                                limit=additional_data_needed * 2,
+                                sort="desc"
+                            )
+                        
+                        if historical_data:
+                            logger.info(f"Retrieved {len(historical_data)} additional records from database")
+                            
+                            # 将历史数据转换为DataFrame
+                            historical_df = pd.DataFrame(historical_data)
+                            
+                            # 确保数据列名正确
+                            required_columns = ['high', 'low', 'close']
+                            if all(col in historical_df.columns for col in required_columns):
+                                # 合并数据并按日期排序
+                                combined_df = pd.concat([historical_df, df_copy], ignore_index=True)
+                                # 确保日期唯一，保留最新记录
+                                combined_df = combined_df.sort_values('date', ascending=True)
+                                combined_df = combined_df.drop_duplicates(subset=['date'], keep='last').reset_index(drop=True)
+                                df_copy = combined_df
+                                logger.info(f"Combined data has {len(df_copy)} records")
+                            else:
+                                logger.warning(f"Historical data missing required columns: {required_columns}")
+                        else:
+                            logger.warning(f"No historical data found for {stock_code}")
+                    except Exception as e:
+                        logger.error(f"Error fetching historical data for {stock_code}: {str(e)}")
+                
+                # 如果仍然数据不足，返回全NaN结果
+                if len(df_copy) < period:
+                    logger.warning(f"Still not enough data points after fetching historical data. Required: {period}, Available: {len(df_copy)}")
+                    return result
+            
+            # 找出数据有效的行
+            valid_data_mask = df_copy[required_columns].notna().all(axis=1)
+            
+            if not valid_data_mask.any():
+                logger.warning("No valid data points found for CCI calculation")
+                return result
+            
+            # 计算典型价格 (TP)
+            tp = (df_copy['high'] + df_copy['low'] + df_copy['close']) / 3
+            
+            # 计算TP的简单移动平均线 (SMA)
             sma = tp.rolling(window=period).mean()
+            
+            # 计算平均绝对偏差 (MAD)，使用更高效的方式
+            # 先计算每个点相对于均值的绝对偏差，然后使用rolling窗口平均
             mad = tp.rolling(window=period).apply(
-                lambda x: np.abs(x - x.mean()).mean(), raw=False
+                lambda x: np.fabs(x - x.mean()).mean(), raw=True  # 使用raw=True提高性能
             )
-            cci = (tp - sma) / (constant * mad)
-            return cci
+            
+            # 计算CCI，处理以下情况：
+            # 1. MAD为零或接近零
+            # 2. 数据点不足
+            # 3. 中间计算出现NaN
+            valid_cci_mask = (mad > 1e-10) & valid_data_mask  # 使用小阈值避免除零错误
+            
+            # Create a temporary Series to hold CCI values for the entire combined dataframe
+            temp_cci = pd.Series(np.nan, index=df_copy.index)
+            
+            if valid_cci_mask.any():
+                # 只在有效位置计算CCI
+                temp_cci[valid_cci_mask] = (tp[valid_cci_mask] - sma[valid_cci_mask]) / (constant * mad[valid_cci_mask])
+                
+                # Create a date-to-CCI mapping
+                date_cci_map = pd.Series(temp_cci.values, index=df_copy['date'])
+                
+                # Map the CCI values back to the original input dataframe's dates
+                result = df['date'].map(date_cci_map)
+                
+                # 记录计算结果统计信息以便调试
+                valid_result_count = result.notna().sum()
+                logger.debug(f"Calculated CCI for {valid_result_count}/{len(df)} data points")
+            else:
+                logger.warning("No valid CCI values could be calculated")
+            
+            return result
         except Exception as e:
             logger.error(f"Error calculating CCI: {str(e)}")
-            return pd.Series([np.nan] * len(df))
+            # 出错时返回全NaN序列
+            if isinstance(df, pd.DataFrame):
+                return pd.Series([np.nan] * len(df), index=df.index)
+            else:
+                return pd.Series([np.nan])
 
-    async def calculate_technical_indicators(self, stock_code: str, df: pd.DataFrame):
-        """Calculate all technical indicators for a stock"""
+    async def calculate_technical_indicators(self, stock_code: str, df: pd.DataFrame) -> int:
+        """Calculate all technical indicators for a stock and return the number of updated records"""
         try:
             # Get stock properties for dynamic parameters
             stock_info = await self.mongo_service.find_one('stock_info', {'code': stock_code})
             cci_period, cci_constant = await self._get_cci_parameters(stock_info)
             
-            # Calculate CCI
+            # Calculate CCI，传递股票代码以便在数据不足时获取历史数据
             df_sorted = df.sort_values('date')
-            cci_values = await self.calculate_cci(df_sorted, cci_period, cci_constant)
+            cci_values = await self.calculate_cci(df_sorted, stock_code, cci_period, cci_constant)
             
             # Save technical indicators
-            collection_name = f"technical_{stock_code.replace('.', '_')}"
+            collection_name = self.mongo_service.get_technical_collection_name(stock_code)
             operations = []
             
+            # Get the latest technical analysis date to avoid re-updating existing records
+            latest_tech_date_str = await self.mongo_service.get_latest_technical_date(stock_code)
+            latest_tech_date = datetime.strptime(latest_tech_date_str, "%Y-%m-%d %H:%M:%S") if latest_tech_date_str else datetime.min
+            
             for i, (idx, row) in enumerate(df_sorted.iterrows()):
-                if i >= cci_period - 1 and not pd.isna(cci_values.iloc[i]):
-                    tech_doc = {
-                        'code': stock_code,
-                        'date': row['date'] if isinstance(row['date'], datetime) else datetime.strptime(row['date'], '%Y-%m-%d'),
-                        'cci': float(cci_values.iloc[i]),
-                        'cci_period': cci_period,
-                        'cci_constant': cci_constant,
-                        'updated_at': datetime.utcnow()
-                    }
+                if not pd.isna(cci_values.iloc[i]):
+                    current_date = row['date'] if isinstance(row['date'], datetime) else (datetime.strptime(row['date'], '%Y-%m-%d') if isinstance(row['date'], str) else row['date'])
                     
-                    operations.append(
-                        UpdateOne(
-                            {'code': stock_code, 'date': tech_doc['date']},
-                            {'$set': tech_doc},
-                            upsert=True
+                    # Only update records that are after the latest technical analysis date
+                    if current_date > latest_tech_date:
+                        tech_doc = {
+                            'code': stock_code,
+                            'date': current_date,
+                            'cci': float(cci_values.iloc[i]),
+                            'cci_period': cci_period,
+                            'cci_constant': cci_constant,
+                            'updated_at': datetime.utcnow()
+                        }
+                        
+                        operations.append(
+                            UpdateOne(
+                                {'code': stock_code, 'date': tech_doc['date']},
+                                {'$set': tech_doc},
+                                upsert=True
+                            )
                         )
-                    )
             
             if operations:
                 await self.mongo_service.bulk_write(collection_name, operations)
-                logger.info(f"Calculated technical indicators for {stock_code}")
-                
+                logger.info(f"Calculated technical indicators for {stock_code}, updated {len(operations)} new records")
+                return len(operations)
+            return 0
+            
         except Exception as e:
             logger.error(f"Error calculating technical indicators for {stock_code}: {str(e)}")
+            raise  # 重新抛出异常以便调用者能够捕获并处理
     
+    async def count_documents(self, collection_name: str, query: Dict[str, Any]) -> int:
+        """统计集合中的文档数量"""
+        try:
+            # 检查集合是否存在
+            collection_names = await self.mongo_service.get_collection_names()
+            if collection_name not in collection_names:
+                return 0
+            
+            # 执行计数查询
+            count = await self.mongo_service.db[collection_name].count_documents(query)
+            return count
+        except Exception as e:
+            logger.error(f"Error counting documents in {collection_name}: {str(e)}")
+            return 0
+            
     async def _get_cci_parameters(self, stock_info: Dict[str, Any]) -> tuple:
         """Get CCI parameters based on stock properties"""
         # Default values
@@ -115,11 +277,201 @@ class TechnicalAnalysisService:
         
         return period, constant
 
+    async def update_stock_cci(self, stock_code: str, date_range: Dict[str, str] = None) -> Dict[str, Any]:
+        """手动更新指定股票的CCI指标值
+        
+        Args:
+            stock_code: 股票代码
+            date_range: 日期范围，格式为 {'start_date': 'YYYY-MM-DD', 'end_date': 'YYYY-MM-DD'}，不提供则更新所有数据
+            
+        Returns:
+            包含更新结果的字典
+        """
+        try:
+            # Convert to lowercase for consistent case handling
+            stock_code = stock_code.lower()
+            
+            logger.info(f"开始更新股票 {stock_code} 的CCI指标")
+            
+            # Determine CCI period based on stock market type
+            cci_period = 20 if stock_code.startswith("bj.") else 14
+            
+            # 从数据库获取股票的日线数据
+            # 获取历史数据，需要比计算周期多一些数据来确保计算准确性
+            start_date = date_range.get('start_date') if date_range else None
+            end_date = date_range.get('end_date') if date_range else None
+            
+            # If no date range provided, only update new data after the last technical analysis
+            if not date_range:
+                logger.debug(f"Checking latest tech date for {stock_code}")
+                latest_tech_date = await self.mongo_service.get_latest_technical_date(stock_code)
+                logger.debug(f"Latest tech date for {stock_code}: {latest_tech_date}")
+                if latest_tech_date:
+                    # Convert to datetime object
+                    latest_tech_datetime = datetime.strptime(latest_tech_date, "%Y-%m-%d %H:%M:%S")
+                    # Subtract (period - 1) days to ensure enough data for CCI calculation
+                    start_date = (latest_tech_datetime - timedelta(days=cci_period - 1)).strftime("%Y-%m-%d")
+                    logger.debug(f"Calculated start_date: {start_date}")
+            
+            historical_data = await self.mongo_service.get_stock_history(
+                stock_code=stock_code,
+                start_date=start_date,
+                end_date=end_date,
+                limit=0,  # 获取所有历史数据
+                sort="asc"  # 升序排列，便于计算
+            )
+            
+            if not historical_data:
+                return {"success": False, "message": f"未找到股票 {stock_code} 的历史数据"}
+            
+            # 将历史数据转换为DataFrame
+            df = pd.DataFrame(historical_data)
+            
+            # 确保数据按日期排序
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date')
+            
+            # 调用现有的计算方法
+            updated_count = await self.calculate_technical_indicators(stock_code, df)
+            
+            # 验证更新结果
+            collection_name = self.mongo_service.get_technical_collection_name(stock_code)
+            total_records = await self.mongo_service.count_documents(
+                collection_name,
+                {'code': stock_code}
+            )
+            
+            logger.info(f"股票 {stock_code} 的CCI指标更新完成，共 {total_records} 条记录")
+            return {
+                "success": True,
+                "message": f"股票 {stock_code} 的CCI指标更新成功",
+                "updated_count": updated_count
+            }
+            
+        except Exception as e:
+            logger.error(f"更新股票 {stock_code} 的CCI指标时出错: {str(e)}")
+            return {
+                "success": False,
+                "message": f"更新失败: {str(e)}"
+            }
+    
+    async def update_all_stocks_cci(self) -> Dict[str, Any]:
+        """一键更新所有股票的CCI指标值
+        
+        从stock_info集合获取所有股票列表，对每个股票：
+        1. 检查technical_xx_123456集合是否存在，不存在则创建
+        2. 查询最新CCI日期
+        3. 更新从该日期到今日的CCI值
+        
+        Returns:
+            包含更新结果的字典，包含成功和失败的统计信息
+        """
+        try:
+            logger.info("开始批量更新所有股票的CCI指标")
+            
+            # 从stock_info集合获取所有股票列表
+            stocks = await self.mongo_service.get_all_stocks()
+            
+            if not stocks:
+                logger.warning("未从stock_info集合获取到股票数据")
+                return {
+                    "success": False,
+                    "message": "未从stock_info集合获取到股票数据"
+                }
+            
+            results = {
+                'success_count': 0,
+                'failed_count': 0,
+                'total_count': len(stocks),
+                'success_stocks': [],
+                'failed_stocks': []
+            }
+            
+            # 处理每个股票
+            for stock in stocks:
+                try:
+                    # 获取股票代码
+                    stock_code = stock.get('code', '')
+                    if not stock_code:
+                        logger.warning("跳过无效的股票数据（缺少code字段）")
+                        continue
+                    
+                    logger.info(f"开始处理股票: {stock_code}")
+                    
+                    # 确保技术分析集合存在，如果不存在则创建
+                    collection_ensured = await self.mongo_service.ensure_technical_collection_exists(stock_code)
+                    if not collection_ensured:
+                        logger.error(f"无法创建或访问股票 {stock_code} 的技术分析集合")
+                        results['failed_count'] += 1
+                        results['failed_stocks'].append({
+                            'code': stock_code,
+                            'error': '无法创建或访问技术分析集合'
+                        })
+                        continue
+                    
+                    # 获取该股票的最新技术分析日期
+                    latest_tech_date = await self.mongo_service.get_latest_technical_date(stock_code)
+                    
+                    # 确定起始日期
+                    if latest_tech_date:
+                        start_date = latest_tech_date
+                        logger.info(f"股票 {stock_code} 的最新CCI日期为 {start_date}")
+                    else:
+                        start_date = None  # 如果没有数据，则从最早的数据开始
+                        logger.info(f"股票 {stock_code} 没有找到已有的CCI数据，将更新全部数据")
+                    
+                    # 构建日期范围参数
+                    date_range = {
+                        'start_date': start_date.strftime('%Y-%m-%d 00:00:00') if isinstance(start_date, datetime) else start_date,
+                        'end_date': datetime.now().strftime('%Y-%m-%d 23:59:59')
+                    }
+                    
+                    # 更新该股票的CCI值
+                    result = await self.update_stock_cci(stock_code, date_range)
+                    
+                    if result.get('success'):
+                        results['success_count'] += 1
+                        results['success_stocks'].append({
+                            'code': stock_code,
+                            'updated_count': result.get('updated_count', 0)
+                        })
+                        logger.info(f"成功更新股票 {stock_code} 的CCI指标，更新了 {result.get('updated_count', 0)} 条记录")
+                    else:
+                        results['failed_count'] += 1
+                        results['failed_stocks'].append({
+                            'code': stock_code,
+                            'error': result.get('message', 'Unknown error')
+                        })
+                        logger.warning(f"更新股票 {stock_code} 的CCI指标失败: {result.get('message')}")
+                    
+                except Exception as e:
+                    stock_code = stock.get('code', 'Unknown')
+                    logger.error(f"处理股票 {stock_code} 时出错: {str(e)}")
+                    results['failed_count'] += 1
+                    results['failed_stocks'].append({
+                        'code': stock_code,
+                        'error': str(e)
+                    })
+                    
+            logger.info(f"批量更新所有股票的CCI指标完成，成功: {results['success_count']}, 失败: {results['failed_count']}, 总计: {results['total_count']}")
+            return {
+                "success": True,
+                "message": f"批量更新完成，成功 {results['success_count']} 只股票，失败 {results['failed_count']} 只股票，总计 {results['total_count']} 只股票",
+                "results": results
+            }
+            
+        except Exception as e:
+            logger.error(f"批量更新所有股票的CCI指标时出错: {str(e)}")
+            return {
+                "success": False,
+                "message": f"批量更新失败: {str(e)}"
+            }
+    
     async def evaluate_trading_strategy(self, stock_code: str, strategy: Dict[str, Any]) -> bool:
         """Evaluate if a stock meets trading strategy conditions"""
         try:
             # Get latest technical data
-            collection_name = f"technical_{stock_code.replace('.', '_')}"
+            collection_name = f"technical_{stock_code}"
             tech_data = await self.mongo_service.find(
                 collection_name,
                 {'code': stock_code},

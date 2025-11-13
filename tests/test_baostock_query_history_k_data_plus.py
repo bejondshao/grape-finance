@@ -11,9 +11,10 @@ print('login respond  error_msg:' + lg.error_msg)
 # 详细指标参数，参见“历史行情指标参数”章节；“分钟线”参数与“日线”参数不同。“分钟线”不包含指数。
 # 分钟线指标：date,time,code,open,high,low,close,volume,amount,adjustflag
 # 周月线指标：date,code,open,high,low,close,volume,amount,adjustflag,turn,pctChg
-rs = bs.query_history_k_data_plus("bj.920809",
+# 收盘前运行返回至前一交易日数据，收盘后17:30后返回当日数据。
+rs = bs.query_history_k_data_plus("sh.000001",
                                   "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
-                                  start_date='2025-07-01',
+                                  start_date='2025-11-01',
                                   frequency="d", adjustflag="3")
 print('query_history_k_data_plus respond error_code:' + rs.error_code)
 print('query_history_k_data_plus respond  error_msg:' + rs.error_msg)

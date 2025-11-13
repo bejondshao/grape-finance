@@ -57,14 +57,14 @@ class DataService:
         # Schedule stock list update every day at 18:00
         self.scheduler.add_job(
             self.fetch_stock_list,
-            trigger=CronTrigger(hour=18, minute=0),
+            trigger=CronTrigger(hour=20, minute=30),
             id='fetch_stock_list'
         )
         
         # Schedule daily data update every day at 19:00  
         self.scheduler.add_job(
             self.fetch_all_stock_daily_data,
-            trigger=CronTrigger(hour=19, minute=0),
+            trigger=CronTrigger(hour=20, minute=32),
             id='fetch_daily_data'
         )
         
@@ -252,7 +252,7 @@ class DataService:
             logger.debug(f"DataFrame structure for {stock_code}: {df.shape}, columns: {df.columns.tolist()}")
             
             # Process and save data
-            collection_name = f"stock_daily_{stock_code.replace('.', '_')}"
+            collection_name = f"stock_daily_{stock_code}"
             operations = []
             
             for _, row in df.iterrows():
@@ -338,7 +338,7 @@ class DataService:
     async def _get_last_date_for_stock(self, stock_code: str) -> Optional[str]:
         """Get the last date for a stock from its daily data collection"""
         try:
-            collection_name = f"stock_daily_{stock_code.replace('.', '_')}"
+            collection_name = f"stock_daily_{stock_code}"
             last_record = await self.mongo_service.find_one(
                 collection_name,
                 {},

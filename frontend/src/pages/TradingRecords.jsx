@@ -133,7 +133,7 @@ const TradingRecords = () => {
             const response = await tradingRecordService.getRecords()
             console.log('API Response:', response)
             console.log('Response records:', response.records)
-            setRecords(response.records)
+            setRecords(response.records || {})
         } catch (error) {
             message.error('Failed to fetch trading records')
         } finally {
@@ -144,7 +144,7 @@ const TradingRecords = () => {
     const fetchProfit = async () => {
         try {
             const response = await tradingRecordService.calculateProfit()
-            setProfitData(response.data || {})
+            setProfitData(response.records || {})
         } catch (error) {
             console.error('Failed to fetch profit data')
         }
