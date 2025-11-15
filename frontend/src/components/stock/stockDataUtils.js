@@ -71,6 +71,27 @@ export const aggregateData = (data, frame) => {
         break;
       }
     }
+    
+    // KDJ指标取周期内最后一个非空值
+    let kdj_k = null;
+    let kdj_d = null;
+    let kdj_j = null;
+    for (let i = group.length - 1; i >= 0; i--) {
+      if (group[i].kdj_k !== null && group[i].kdj_k !== undefined) {
+        kdj_k = group[i].kdj_k;
+      }
+      if (group[i].kdj_d !== null && group[i].kdj_d !== undefined) {
+        kdj_d = group[i].kdj_d;
+      }
+      if (group[i].kdj_j !== null && group[i].kdj_j !== undefined) {
+        kdj_j = group[i].kdj_j;
+      }
+      
+      // 如果三个值都找到了，就跳出循环
+      if (kdj_k !== null && kdj_d !== null && kdj_j !== null) {
+        break;
+      }
+    }
 
     // 计算涨跌幅度 (基于周期内第一个交易日的前一天收盘价)
     const preclose = group[0].preclose;
@@ -91,6 +112,9 @@ export const aggregateData = (data, frame) => {
       psTTM,
       pcfNcfTTM,
       cci, // CCI指标
+      kdj_k, // KDJ K值
+      kdj_d, // KDJ D值
+      kdj_j, // KDJ J值
       change,        // 涨跌金额
       changePercent  // 涨跌百分比
     });
