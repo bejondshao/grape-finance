@@ -12,6 +12,28 @@ Key Features:
 4. Stock collection management
 5. Real-time monitoring and income calculation
 6. Comprehensive configuration management
+7. Right-side trading strategy
+
+Right-Side Trading Strategy:
+The right-side trading strategy is a trend-following approach that aims to capture stock momentum by entering positions after a confirmed breakout. This strategy follows the principle of "buy high and sell higher" by identifying stocks that are showing strength and following through on that strength.
+
+Core Components:
+1. Price Breakout: Identifies when a stock's price breaks through key resistance levels (previous highs or specified price points)
+2. Volume Confirmation: Validates breakouts with significant volume increases to ensure the move has strong backing
+3. Technical Indicator Confirmation: Uses the CCI (Commodity Channel Index) indicator to confirm trend direction - specifically looking for CCI to break above a threshold (default -100) from below
+4. Moving Average Alignment: Ensures short-term moving averages are above longer-term ones (bullish alignment) to confirm overall trend direction
+
+How It Works:
+1. The system scans all tracked stocks daily
+2. Evaluates each stock against the right-side trading criteria
+3. Adds matching stocks to the watchlist with a recommended action
+4. Users can review these opportunities in the Stock View section
+
+Strategy Benefits:
+- Reduces risk of trading against the main trend
+- Captures stocks with strong momentum
+- Filters out false breakouts with volume and technical confirmation
+- Helps traders stay on the right side of the market
 
 Setup Instructions:
 

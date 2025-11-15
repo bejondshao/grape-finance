@@ -1,6 +1,7 @@
 import logging
 import pandas as pd
 import numpy as np
+import asyncio
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from pymongo import UpdateOne
@@ -81,7 +82,7 @@ class TechnicalAnalysisService:
                         logger.info(f"Attempting to fetch additional historical data for {stock_code}")
                         
                         # 计算需要补充的数据量
-                        additional_data_needed = period - len(df_copy)
+                        additional_data_needed = period - len(df_copy) + 1  # 多获取一些确保足够
                         
                         # 获取补充的历史数据
                         # 假设df中的数据是按日期排序的，我们需要获取更早的数据
@@ -97,7 +98,7 @@ class TechnicalAnalysisService:
                             historical_data = await self.mongo_service.get_stock_history(
                                 stock_code=stock_code,
                                 end_date=end_date_str,
-                                limit=additional_data_needed * 2,  # 获取更多数据以确保有足够的有效数据
+                                limit=additional_data_needed * 2,  # 获取更多数据以确保有足够的数据
                                 sort="desc"  # 降序排列，最新的数据在前
                             )
                         else:
@@ -115,13 +116,15 @@ class TechnicalAnalysisService:
                             historical_df = pd.DataFrame(historical_data)
                             
                             # 确保数据列名正确
-                            required_columns = ['high', 'low', 'close']
+                            required_columns = ['high', 'low', 'close', 'date']
                             if all(col in historical_df.columns for col in required_columns):
                                 # 合并数据并按日期排序
                                 combined_df = pd.concat([historical_df, df_copy], ignore_index=True)
                                 # 确保日期唯一，保留最新记录
-                                combined_df = combined_df.sort_values('date', ascending=True)
-                                combined_df = combined_df.drop_duplicates(subset=['date'], keep='last').reset_index(drop=True)
+                                if 'date' in combined_df.columns:
+                                    combined_df['date'] = pd.to_datetime(combined_df['date'])
+                                    combined_df = combined_df.sort_values('date', ascending=True)
+                                    combined_df = combined_df.drop_duplicates(subset=['date'], keep='last').reset_index(drop=True)
                                 df_copy = combined_df
                                 logger.info(f"Combined data has {len(df_copy)} records")
                             else:
@@ -169,10 +172,20 @@ class TechnicalAnalysisService:
                 temp_cci[valid_cci_mask] = (tp[valid_cci_mask] - sma[valid_cci_mask]) / (constant * mad[valid_cci_mask])
                 
                 # Create a date-to-CCI mapping
-                date_cci_map = pd.Series(temp_cci.values, index=df_copy['date'])
-                
-                # Map the CCI values back to the original input dataframe's dates
-                result = df['date'].map(date_cci_map)
+                if 'date' in df_copy.columns and 'date' in df.columns:
+                    df_copy['date'] = pd.to_datetime(df_copy['date'])
+                    df['date'] = pd.to_datetime(df['date'])
+                    date_cci_map = pd.Series(temp_cci.values, index=df_copy['date'])
+                    
+                    # Remove duplicate indices, keeping the last value for each date
+                    date_cci_map = date_cci_map[~date_cci_map.index.duplicated(keep='last')]
+                    
+                    # Map the CCI values back to the original input dataframe's dates
+                    result = df['date'].map(date_cci_map)
+                else:
+                    # 如果没有日期列，直接返回计算结果的后部分（对应原始df的长度）
+                    if len(temp_cci) >= len(result):
+                        result = temp_cci.iloc[-len(result):].reset_index(drop=True)
                 
                 # 记录计算结果统计信息以便调试
                 valid_result_count = result.notna().sum()
@@ -565,6 +578,81 @@ class TechnicalAnalysisService:
                 "success": False,
                 "message": f"更新失败: {str(e)}"
             }
+
+    async def update_stock_indicators(self, stock_code: str, date_range: Dict[str, str] = None) -> Dict[str, Any]:
+        """手动更新指定股票的所有技术指标值
+        
+        Args:
+            stock_code: 股票代码
+            date_range: 日期范围，格式为 {'start_date': 'YYYY-MM-DD', 'end_date': 'YYYY-MM-DD'}，不提供则更新所有数据
+            
+        Returns:
+            包含更新结果的字典
+        """
+        try:
+            # Convert to lowercase for consistent case handling
+            stock_code = stock_code.lower()
+            
+            logger.info(f"开始更新股票 {stock_code} 的所有技术指标")
+            
+            # 从数据库获取股票的日线数据
+            # 获取历史数据，需要比计算周期多一些数据来确保计算准确性
+            start_date = date_range.get('start_date') if date_range else None
+            end_date = date_range.get('end_date') if date_range else None
+            
+            # If no date range provided, only update new data after the last technical analysis
+            if not date_range:
+                logger.debug(f"Checking latest tech date for {stock_code}")
+                latest_tech_date = await self.mongo_service.get_latest_technical_date(stock_code)
+                logger.debug(f"Latest tech date for {stock_code}: {latest_tech_date}")
+                if latest_tech_date:
+                    # Convert to datetime object
+                    latest_tech_datetime = datetime.strptime(latest_tech_date, "%Y-%m-%d %H:%M:%S")
+                    # Subtract (period - 1) days to ensure enough data for indicator calculation (using max period)
+                    start_date = (latest_tech_datetime - timedelta(days=20)).strftime("%Y-%m-%d")
+                    logger.debug(f"Calculated start_date: {start_date}")
+            
+            historical_data = await self.mongo_service.get_stock_history(
+                stock_code=stock_code,
+                start_date=start_date,
+                end_date=end_date,
+                limit=0,  # 获取所有历史数据
+                sort="asc"  # 升序排列，便于计算
+            )
+            
+            if not historical_data:
+                return {"success": False, "message": f"未找到股票 {stock_code} 的历史数据"}
+            
+            # 将历史数据转换为DataFrame
+            df = pd.DataFrame(historical_data)
+            
+            # 确保数据按日期排序
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date')
+            
+            # 调用现有的计算方法
+            updated_count = await self.calculate_technical_indicators(stock_code, df)
+            
+            # 验证更新结果
+            collection_name = self.mongo_service.get_technical_collection_name(stock_code)
+            total_records = await self.mongo_service.count_documents(
+                collection_name,
+                {'code': stock_code}
+            )
+            
+            logger.info(f"股票 {stock_code} 的所有技术指标更新完成，共 {total_records} 条记录")
+            return {
+                "success": True,
+                "message": f"股票 {stock_code} 的所有技术指标更新成功",
+                "updated_count": updated_count
+            }
+            
+        except Exception as e:
+            logger.error(f"更新股票 {stock_code} 的所有技术指标时出错: {str(e)}")
+            return {
+                "success": False,
+                "message": f"更新失败: {str(e)}"
+            }
     
     async def update_all_stocks_cci(self) -> Dict[str, Any]:
         """一键更新所有股票的CCI指标值
@@ -677,7 +765,146 @@ class TechnicalAnalysisService:
                 "success": False,
                 "message": f"批量更新失败: {str(e)}"
             }
+
+    async def update_all_stocks_indicators(self) -> Dict[str, Any]:
+        """一键更新所有股票的所有技术指标值
+        
+        从stock_info集合获取所有股票列表，对每个股票：
+        1. 检查technical_xx_123456集合是否存在，不存在则创建
+        2. 查询最新技术指标日期
+        3. 更新从该日期到今日的所有技术指标值
+        
+        Returns:
+            包含更新结果的字典，包含成功和失败的统计信息
+        """
+        try:
+            logger.info("开始批量更新所有股票的所有技术指标")
+            
+            # 从stock_info集合获取所有股票列表
+            stocks = await self.mongo_service.get_all_stocks()
+            
+            if not stocks:
+                logger.warning("未从stock_info集合获取到股票数据")
+                return {
+                    "success": False,
+                    "message": "未从stock_info集合获取到股票数据"
+                }
+            
+            results = {
+                'success_count': 0,
+                'failed_count': 0,
+                'total_count': len(stocks),
+                'success_stocks': [],
+                'failed_stocks': []
+            }
+            
+            # 分批处理股票，避免创建过多并发连接
+            batch_size = 20  # 每批处理的股票数量
+            for i in range(0, len(stocks), batch_size):
+                batch = stocks[i:i+batch_size]
+                tasks = []
+                
+                # 为每个股票创建处理任务
+                for stock in batch:
+                    # 获取股票代码
+                    stock_code = stock.get('code', '')
+                    if not stock_code:
+                        logger.warning("跳过无效的股票数据（缺少code字段）")
+                        results['failed_count'] += 1
+                        results['failed_stocks'].append({
+                            'code': 'Unknown',
+                            'error': '缺少code字段'
+                        })
+                        continue
+                    
+                    # 创建处理任务
+                    task = asyncio.create_task(self._process_stock_for_update(stock_code))
+                    tasks.append((stock_code, task))
+                
+                # 并行执行当前批次的任务
+                for stock_code, task in tasks:
+                    try:
+                        result = await task
+                        if result.get('success'):
+                            results['success_count'] += 1
+                            results['success_stocks'].append({
+                                'code': stock_code,
+                                'updated_count': result.get('updated_count', 0)
+                            })
+                            logger.info(f"成功更新股票 {stock_code} 的所有技术指标，更新了 {result.get('updated_count', 0)} 条记录")
+                        else:
+                            results['failed_count'] += 1
+                            results['failed_stocks'].append({
+                                'code': stock_code,
+                                'error': result.get('message', 'Unknown error')
+                            })
+                            logger.warning(f"更新股票 {stock_code} 的所有技术指标失败: {result.get('message')}")
+                    except Exception as e:
+                        logger.error(f"处理股票 {stock_code} 时出错: {str(e)}")
+                        results['failed_count'] += 1
+                        results['failed_stocks'].append({
+                            'code': stock_code,
+                            'error': str(e)
+                        })
+                
+                logger.info(f"已完成第 {i//batch_size + 1} 批股票处理，当前成功: {results['success_count']}, 失败: {results['failed_count']}")
+                    
+            logger.info(f"批量更新所有股票的所有技术指标完成，成功: {results['success_count']}, 失败: {results['failed_count']}, 总计: {results['total_count']}")
+            return {
+                "success": True,
+                "message": f"批量更新完成，成功 {results['success_count']} 只股票，失败 {results['failed_count']} 只股票，总计 {results['total_count']} 只股票",
+                "results": results
+            }
+            
+        except Exception as e:
+            logger.error(f"批量更新所有股票的所有技术指标时出错: {str(e)}")
+            return {
+                "success": False,
+                "message": f"批量更新失败: {str(e)}"
+            }
     
+    async def _process_stock_for_update(self, stock_code: str) -> Dict[str, Any]:
+        """处理单个股票的更新操作"""
+        try:
+            logger.info(f"开始处理股票: {stock_code}")
+            
+            # 确保技术分析集合存在，如果不存在则创建
+            collection_ensured = await self.mongo_service.ensure_technical_collection_exists(stock_code)
+            if not collection_ensured:
+                logger.error(f"无法创建或访问股票 {stock_code} 的技术分析集合")
+                return {
+                    "success": False,
+                    "message": "无法创建或访问技术分析集合"
+                }
+            
+            # 获取该股票的最新技术分析日期
+            latest_tech_date = await self.mongo_service.get_latest_technical_date(stock_code)
+            
+            # 确定起始日期
+            if latest_tech_date:
+                start_date = latest_tech_date
+                logger.info(f"股票 {stock_code} 的最新技术指标日期为 {start_date}")
+            else:
+                start_date = None  # 如果没有数据，则从最早的数据开始
+                logger.info(f"股票 {stock_code} 没有找到已有的技术指标数据，将更新全部数据")
+            
+            # 构建日期范围参数
+            date_range = {
+                'start_date': start_date.strftime('%Y-%m-%d 00:00:00') if isinstance(start_date, datetime) else start_date,
+                'end_date': datetime.now().strftime('%Y-%m-%d 23:59:59')
+            }
+            
+            # 更新该股票的所有技术指标值
+            result = await self.update_stock_indicators(stock_code, date_range)
+            return result
+            
+        except Exception as e:
+            logger.error(f"处理股票 {stock_code} 更新时出错: {str(e)}")
+            return {
+                "success": False,
+                "message": str(e)
+            }
+
     async def evaluate_trading_strategy(self, stock_code: str, strategy: Dict[str, Any]) -> bool:
         """Evaluate if a stock meets trading strategy conditions"""
         try:
@@ -729,3 +956,245 @@ class TechnicalAnalysisService:
         except Exception as e:
             logger.error(f"Error evaluating trading strategy for {stock_code}: {str(e)}")
             return False
+
+    async def evaluate_right_side_trading_strategy(self, stock_code: str, params: Dict[str, Any] = None) -> bool:
+        """Evaluate if a stock meets right side trading strategy conditions
+        
+        右侧交易策略是一种趋势跟踪策略，核心思想是在股价确认上涨趋势后买入，
+        或在确认下跌趋势后卖出。这种策略追求的是顺势而为，减少逆势操作带来的风险。
+        
+        右侧交易策略条件：
+        1. 价格突破关键阻力位（如前期高点、均线等）
+        2. 成交量放大确认突破有效性
+        3. 技术指标确认趋势方向（如CCI从-100以下向上突破）
+        4. 可选：MA多头排列等确认趋势
+        
+        Args:
+            stock_code: 股票代码
+            params: 策略参数，包括：
+                - breakout_threshold: 突破阈值，默认为0（表示突破前高）
+                - volume_threshold: 成交量放大倍数，默认为1.5
+                - cci_threshold: CCI阈值，默认为-100（CCI从-100以下向上突破）
+                - ma_periods: 均线周期列表，默认为[5, 10, 20]
+                
+        Returns:
+            bool: 是否满足右侧交易策略条件
+        """
+        try:
+            if params is None:
+                params = {}
+            
+            # 获取参数，默认值
+            breakout_threshold = params.get('breakout_threshold', 0)  # 突破阈值
+            volume_threshold = params.get('volume_threshold', 1.5)    # 成交量放大倍数
+            cci_threshold = params.get('cci_threshold', -100)         # CCI阈值
+            ma_periods = params.get('ma_periods', [5, 10, 20])        # 均线周期
+            
+            # 获取股票历史数据（包括价格、成交量等）
+            historical_data = await self.mongo_service.get_stock_history(
+                stock_code=stock_code,
+                limit=30,  # 获取最近30天的数据
+                sort="desc"
+            )
+            
+            if not historical_data or len(historical_data) < max(ma_periods) + 2:
+                return False
+            
+            # 转换为DataFrame并按日期排序
+            df = pd.DataFrame(historical_data)
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.sort_values('date').reset_index(drop=True)
+            
+            # 计算均线
+            for period in ma_periods:
+                df[f'ma{period}'] = df['close'].rolling(window=period).mean()
+            
+            # 计算平均成交量（用于比较最近的成交量）
+            avg_volume = df['volume'].rolling(window=10).mean()
+            
+            # 获取最新数据点
+            latest = df.iloc[-1]
+            previous = df.iloc[-2]
+            
+            # 条件1: 价格突破（收盘价突破前高或均线）
+            price_breakout = False
+            if breakout_threshold == 0:
+                # 突破前高
+                price_breakout = latest['close'] > df['high'].iloc[-6:-1].max() if len(df) >= 6 else False
+            else:
+                # 突破指定价格
+                price_breakout = latest['close'] > breakout_threshold
+            
+            # 条件2: 成交量放大
+            volume_amplified = latest['volume'] > (avg_volume.iloc[-1] * volume_threshold)
+            
+            # 条件3: CCI指标确认（从阈值以下向上突破）
+            # 获取技术指标数据
+            tech_collection = f"technical_{stock_code}"
+            tech_data = await self.mongo_service.find(
+                tech_collection,
+                {'code': stock_code},
+                sort=[('date', -1)],
+                limit=2
+            )
+            
+            cci_condition = False
+            if len(tech_data) >= 2:
+                current_cci = tech_data[0].get('cci', 0)
+                previous_cci = tech_data[1].get('cci', 0)
+                
+                # CCI从阈值以下向上突破
+                cci_condition = (previous_cci <= cci_threshold) and (current_cci > cci_threshold)
+            
+            # 条件4: 均线多头排列（可选）
+            ma_alignment = True
+            if len(ma_periods) >= 2:
+                # 短期均线 > 长期均线
+                ma_values = [latest[f'ma{period}'] for period in ma_periods if f'ma{period}' in latest and not pd.isna(latest[f'ma{period}'])]
+                if len(ma_values) >= 2:
+                    # 检查是否为递减序列（从短期到长期）
+                    ma_alignment = all(ma_values[i] >= ma_values[i+1] for i in range(len(ma_values)-1))
+            
+            # 综合判断
+            right_side_condition = price_breakout and volume_amplified and cci_condition and ma_alignment
+            
+            logger.info(f"Right side strategy for {stock_code}: "
+                       f"price_breakout={price_breakout}, "
+                       f"volume_amplified={volume_amplified}, "
+                       f"cci_condition={cci_condition}, "
+                       f"ma_alignment={ma_alignment}, "
+                       f"result={right_side_condition}")
+            
+            return right_side_condition
+            
+        except Exception as e:
+            logger.error(f"Error evaluating right side trading strategy for {stock_code}: {str(e)}")
+            return False
+
+    async def recompute_all_stocks_indicators(self) -> Dict[str, Any]:
+        """重新计算所有股票的所有技术指标值（从头开始计算，不考虑最新日期）
+        
+        从stock_info集合获取所有股票列表，对每个股票：
+        1. 检查technical_xx_123456集合是否存在，不存在则创建
+        2. 删除所有现有技术指标数据
+        3. 重新计算所有历史数据的技术指标值
+        
+        Returns:
+            包含更新结果的字典，包含成功和失败的统计信息
+        """
+        try:
+            logger.info("开始重新计算所有股票的所有技术指标")
+            
+            # 从stock_info集合获取所有股票列表
+            stocks = await self.mongo_service.get_all_stocks()
+            
+            if not stocks:
+                logger.warning("未从stock_info集合获取到股票数据")
+                return {
+                    "success": False,
+                    "message": "未从stock_info集合获取到股票数据"
+                }
+            
+            results = {
+                'success_count': 0,
+                'failed_count': 0,
+                'total_count': len(stocks),
+                'success_stocks': [],
+                'failed_stocks': []
+            }
+            
+            # 分批处理股票，避免创建过多并发连接
+            batch_size = 20  # 每批处理的股票数量
+            for i in range(0, len(stocks), batch_size):
+                batch = stocks[i:i+batch_size]
+                tasks = []
+                
+                # 为每个股票创建处理任务
+                for stock in batch:
+                    # 获取股票代码
+                    stock_code = stock.get('code', '')
+                    if not stock_code:
+                        logger.warning("跳过无效的股票数据（缺少code字段）")
+                        results['failed_count'] += 1
+                        results['failed_stocks'].append({
+                            'code': 'Unknown',
+                            'error': '缺少code字段'
+                        })
+                        continue
+                    
+                    # 创建处理任务
+                    task = asyncio.create_task(self._process_stock_for_recompute(stock_code))
+                    tasks.append((stock_code, task))
+                
+                # 并行执行当前批次的任务
+                for stock_code, task in tasks:
+                    try:
+                        result = await task
+                        if result.get('success'):
+                            results['success_count'] += 1
+                            results['success_stocks'].append({
+                                'code': stock_code,
+                                'updated_count': result.get('updated_count', 0)
+                            })
+                            logger.info(f"成功重新计算股票 {stock_code} 的所有技术指标，更新了 {result.get('updated_count', 0)} 条记录")
+                        else:
+                            results['failed_count'] += 1
+                            results['failed_stocks'].append({
+                                'code': stock_code,
+                                'error': result.get('message', 'Unknown error')
+                            })
+                            logger.warning(f"重新计算股票 {stock_code} 的所有技术指标失败: {result.get('message')}")
+                    except Exception as e:
+                        logger.error(f"处理股票 {stock_code} 时出错: {str(e)}")
+                        results['failed_count'] += 1
+                        results['failed_stocks'].append({
+                            'code': stock_code,
+                            'error': str(e)
+                        })
+                
+                logger.info(f"已完成第 {i//batch_size + 1} 批股票处理，当前成功: {results['success_count']}, 失败: {results['failed_count']}")
+                    
+            logger.info(f"重新计算所有股票的所有技术指标完成，成功: {results['success_count']}, 失败: {results['failed_count']}, 总计: {results['total_count']}")
+            return {
+                "success": True,
+                "message": f"重新计算完成，成功 {results['success_count']} 只股票，失败 {results['failed_count']} 只股票，总计 {results['total_count']} 只股票",
+                "results": results
+            }
+            
+        except Exception as e:
+            logger.error(f"重新计算所有股票的所有技术指标时出错: {str(e)}")
+            return {
+                "success": False,
+                "message": f"重新计算失败: {str(e)}"
+            }
+    
+    async def _process_stock_for_recompute(self, stock_code: str) -> Dict[str, Any]:
+        """处理单个股票的重新计算操作"""
+        try:
+            logger.info(f"开始处理股票: {stock_code}")
+            
+            # 确保技术分析集合存在，如果不存在则创建
+            collection_ensured = await self.mongo_service.ensure_technical_collection_exists(stock_code)
+            if not collection_ensured:
+                logger.error(f"无法创建或访问股票 {stock_code} 的技术分析集合")
+                return {
+                    "success": False,
+                    "message": "无法创建或访问技术分析集合"
+                }
+            
+            # 删除该股票的所有现有技术指标数据
+            tech_collection_name = self.mongo_service.get_technical_collection_name(stock_code)
+            await self.mongo_service.db[tech_collection_name].delete_many({'code': stock_code})
+            logger.info(f"已删除股票 {stock_code} 的所有现有技术指标数据")
+            
+            # 重新计算该股票的所有技术指标值（不提供日期范围，计算所有数据）
+            result = await self.update_stock_indicators(stock_code)
+            return result
+            
+        except Exception as e:
+            logger.error(f"处理股票 {stock_code} 重新计算时出错: {str(e)}")
+            return {
+                "success": False,
+                "message": str(e)
+            }
+

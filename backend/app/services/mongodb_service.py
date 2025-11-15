@@ -405,10 +405,11 @@ class MongoDBService:
             stock_code: 股票代码
         
         Returns:
-            str: 技术分析集合名称 (格式: technical_xx_123456)
+            str: 技术分析集合名称 (格式: technical_xx.123456)
         """
         # Normalize to lowercase for consistent case handling with stored codes
-        stock_code = stock_code.lower().replace('.', '_')
+        # 注意：永远不要使用replace('.', '_')处理股票代码
+        stock_code = stock_code.lower()
         return f"technical_{stock_code}"
     
     async def ensure_technical_collection_exists(self, stock_code: str) -> bool:

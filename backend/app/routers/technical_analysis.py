@@ -11,12 +11,20 @@ logger = logging.getLogger(__name__)
 
 @router.get("/indicators")
 async def get_technical_indicators(
-    stock_code: str,
+    stock_code: Optional[str] = Query(None, description="股票代码"),
     indicator_type: Optional[str] = Query(None, description="Technical indicator type (e.g., CCI)"),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
 ):
     """Get technical indicators for a stock"""
+    # 如果没有提供stock_code，返回空列表而不是错误
+    if not stock_code:
+        return {
+            "stock_code": None,
+            "indicator_type": indicator_type,
+            "indicators": []
+        }
+    
     try:
         mongo_service = MongoDBService()
         collection_name = f"technical_{stock_code}"
@@ -42,6 +50,20 @@ async def get_technical_indicators(
         }
     except Exception as e:
         logger.error(f"Error getting technical indicators for {stock_code}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/config")
+async def get_technical_configs():
+    """Get all technical analysis configurations"""
+    try:
+        mongo_service = MongoDBService()
+        configs = await mongo_service.find('technical_analysis_config', {})
+        # 确保返回的数据格式正确
+        return {
+            "data": configs
+        }
+    except Exception as e:
+        logger.error(f"Error getting technical configs: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/config")
@@ -133,3 +155,50 @@ async def update_all_stocks_cci_endpoint():
     except Exception as e:
         logger.error(f"批量更新所有股票CCI值请求处理错误: {str(e)}")
         raise HTTPException(status_code=500, detail=f"服务器内部错误: {str(e)}")
+
+@router.post("/update-all-indicators")
+async def update_all_stocks_indicators_endpoint():
+    """
+    一键更新所有股票的所有技术指标值
+    
+    对于每个股票，从technical_xx_123456集合中查询最新的技术指标日期，然后更新从该日期到今日的所有技术指标值
+    """
+    try:
+        logger.info("接收到批量更新所有股票所有技术指标值的请求")
+        
+        # 调用服务层方法
+        technical_service = TechnicalAnalysisService()
+        result = await technical_service.update_all_stocks_indicators()
+        
+        # 记录操作日志
+        logger.info(f"批量更新所有股票所有技术指标值请求完成，结果: {result}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"批量更新所有股票所有技术指标值请求处理错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"服务器内部错误: {str(e)}")
+
+@router.post("/recompute-all-indicators")
+async def recompute_all_stocks_indicators_endpoint():
+    """
+    重新计算所有股票的所有技术指标值（从头开始计算，不考虑最新日期）
+    
+    对于每个股票，删除所有现有技术指标数据，然后重新计算所有历史数据的技术指标值
+    """
+    try:
+        logger.info("接收到重新计算所有股票所有技术指标值的请求")
+        
+        # 调用服务层方法
+        technical_service = TechnicalAnalysisService()
+        result = await technical_service.recompute_all_stocks_indicators()
+        
+        # 记录操作日志
+        logger.info(f"重新计算所有股票所有技术指标值请求完成，结果: {result}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"重新计算所有股票所有技术指标值请求处理错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"服务器内部错误: {str(e)}")
+

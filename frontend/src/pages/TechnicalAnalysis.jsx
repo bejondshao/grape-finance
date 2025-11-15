@@ -32,9 +32,13 @@ const TechnicalAnalysis = () => {
       width: 200,
       render: (parameters) => (
         <div>
-          {Object.entries(parameters || {}).map(([key, value]) => (
-            <div key={key}>{key}: {value}</div>
-          ))}
+          {parameters && typeof parameters === 'object' ? (
+            Object.entries(parameters).map(([key, value]) => (
+              <div key={key}>{key}: {value}</div>
+            ))
+          ) : (
+            <div>-</div>
+          )}
         </div>
       ),
     },
@@ -49,6 +53,7 @@ const TechnicalAnalysis = () => {
       dataIndex: 'created_at',
       key: 'created_at',
       width: 120,
+      render: (created_at) => created_at ? new Date(created_at).toLocaleDateString() : '-'
     },
     {
       title: 'Actions',
@@ -75,9 +80,16 @@ const TechnicalAnalysis = () => {
   const fetchIndicators = async () => {
     setLoading(true)
     try {
-      const response = await technicalAnalysisService.getIndicators()
-      setIndicators(response.data || [])
+      const response = await technicalAnalysisService.getConfiguredIndicators()
+      console.log('API Response:', response)
+      // 确保响应数据是数组类型
+      // API 返回的数据结构是 { data: { data: [...] } }，我们需要提取 response.data.data 字段
+      const indicatorsData = response && response.data && response.data.data && Array.isArray(response.data.data) 
+        ? response.data.data 
+        : []
+      setIndicators(indicatorsData)
     } catch (error) {
+      console.error('Failed to fetch indicators:', error)
       message.error('Failed to fetch indicators')
     } finally {
       setLoading(false)
@@ -109,18 +121,22 @@ const TechnicalAnalysis = () => {
       message.success('Indicator deleted successfully')
       fetchIndicators()
     } catch (error) {
-      message.error('Failed to delete indicator')
+      console.error('Failed to delete indicator:', error)
+      message.error('Failed to delete indicator: ' + (error.response?.data?.detail || error.message))
     }
   }
 
   const handleModalOk = async () => {
     try {
       const values = await form.validateFields()
+      console.log('Form values:', values)
 
       if (editingIndicator) {
+        // 更新指标配置
         await technicalAnalysisService.updateIndicator(editingIndicator._id, values)
         message.success('Indicator updated successfully')
       } else {
+        // 创建新的指标配置
         await technicalAnalysisService.createIndicator(values)
         message.success('Indicator created successfully')
       }
@@ -130,7 +146,8 @@ const TechnicalAnalysis = () => {
       form.resetFields()
       fetchIndicators()
     } catch (error) {
-      message.error('Failed to save indicator')
+      console.error('Failed to save indicator:', error)
+      message.error('Failed to save indicator: ' + (error.response?.data?.detail || error.message))
     }
   }
 
@@ -173,6 +190,23 @@ const TechnicalAnalysis = () => {
             </Form.Item>
           </>
         )
+      case 'BOLL':
+        return (
+          <>
+            <Form.Item name={['parameters', 'period']} label="Period" initialValue={20}>
+              <InputNumber min={1} max={100} />
+            </Form.Item>
+            <Form.Item name={['parameters', 'num_std']} label="Standard Deviations" initialValue={2}>
+              <InputNumber min={1} max={5} step={0.5} />
+            </Form.Item>
+          </>
+        )
+      case 'KDJ':
+        return (
+          <Form.Item name={['parameters', 'period']} label="Period" initialValue={9}>
+            <InputNumber min={1} max={100} />
+          </Form.Item>
+        )
       default:
         return null
     }
@@ -208,14 +242,15 @@ const TechnicalAnalysis = () => {
       >
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="Name" rules={[{ required: true }]}>
-            <Input />
+            <Input placeholder="e.g. CCI, RSI, MACD" />
           </Form.Item>
           <Form.Item name="type" label="Type" rules={[{ required: true }]}>
-            <Select>
+            <Select placeholder="Select indicator type">
               <Option value="CCI">CCI</Option>
               <Option value="RSI">RSI</Option>
               <Option value="MACD">MACD</Option>
               <Option value="BOLL">Bollinger Bands</Option>
+              <Option value="KDJ">KDJ</Option>
               <Option value="MA">Moving Average</Option>
             </Select>
           </Form.Item>
@@ -226,7 +261,7 @@ const TechnicalAnalysis = () => {
             {({ getFieldValue }) => renderParameterFields(getFieldValue('type'))}
           </Form.Item>
           <Form.Item name="description" label="Description">
-            <Input.TextArea rows={4} />
+            <Input.TextArea rows={4} placeholder="Enter description for this indicator" />
           </Form.Item>
         </Form>
       </Modal>

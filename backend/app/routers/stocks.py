@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, Query, HTTPException
 from typing import List, Optional, Dict, Any
 import logging
 import json
+import re
 from bson import ObjectId
 from datetime import datetime, timedelta
 
@@ -34,12 +35,55 @@ def get_market_prefix(code):
 def get_market_and_code(code):
     return get_market_prefix(code) + "." + code
 
+def convert_object_id(data):
+    """递归转换数据中的ObjectId为字符串"""
+    if isinstance(data, dict):
+        return {key: convert_object_id(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [convert_object_id(item) for item in data]
+    elif isinstance(data, ObjectId):
+        return str(data)
+    else:
+        return data
+
+@router.get("/search/{keyword}")
+async def search_stocks(keyword: str):
+    """根据关键字搜索股票（支持股票名称或拼音缩写）"""
+    try:
+        mongo_service = MongoDBService()
+        
+        # 支持在股票名称和拼音缩写字段中搜索
+        query = {
+            '$or': [
+                {'code_name': {'$regex': keyword, '$options': 'i'}},
+                {'cnspell': {'$regex': keyword, '$options': 'i'}}
+            ]
+        }
+        
+        # 使用stock_info集合而不是动态集合名称
+        stocks = await mongo_service.find(
+            'stock_info',
+            query,
+            sort=[('code', 1)],
+            limit=10
+        )
+        
+        # 转换ObjectId
+        stocks = convert_object_id(stocks)
+        
+        return {
+            "stocks": stocks
+        }
+    except Exception as e:
+        logger.error(f"Error searching stocks with keyword {keyword}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @router.get("/")
 async def get_stocks(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    code: Optional[str] = "sh.000300",
-    name: Optional[str] = None,
+    code: Optional[str] = Query(None, description="股票代码"),
+    name: Optional[str] = Query(None, description="股票名称或拼音缩写"),
     type: Optional[str] = None
 ):
     """Get stock list with filtering"""
@@ -48,21 +92,33 @@ async def get_stocks(
         
         query = {}
         if code:
-            query['code'] = {'$regex': code, '$options': 'i'}
+            # 支持精确匹配6位数字代码
+            if re.match(r'^\d{6}$', code):
+                query['symbol'] = code
+            else:
+                query['code'] = {'$regex': code, '$options': 'i'}
         if name:
-            query['code_name'] = {'$regex': name, '$options': 'i'}
+            # 支持在股票名称和拼音缩写字段中搜索
+            query['$or'] = [
+                {'code_name': {'$regex': name, '$options': 'i'}},
+                {'cnspell': {'$regex': name, '$options': 'i'}},
+                {'symbol': {'$regex': name, '$options': 'i'}}  # 添加对symbol的搜索支持
+            ]
         if type:
             query['type'] = type
-        collection_name = mongo_service.get_collection_name(code)
+            
+        # 使用stock_info集合而不是动态集合名称
         stocks = await mongo_service.find(
-            collection_name,
+            'stock_info',
             query,
             sort=[('code', 1)],
             #skip=skip,
             limit=limit
         )
         
-        total = len(await mongo_service.find(collection_name, query))
+        # 转换ObjectId
+        stocks = convert_object_id(stocks)
+        total = await mongo_service.count_documents('stock_info', query)
         
         return {
             "stocks": stocks,
@@ -117,6 +173,9 @@ async def get_stock_daily_data(
             sort=[('date', -1)],
             limit=limit
         )
+        
+        # 转换ObjectId
+        data = convert_object_id(data)
         
         return {
             "code": code,
@@ -226,8 +285,32 @@ async def get_stock_integrated_data(
                 integrated_item = {**daily_item}
                 if 'cci' in technical_item:
                     integrated_item['cci'] = technical_item['cci']
+                if 'rsi' in technical_item:
+                    integrated_item['rsi'] = technical_item['rsi']
+                if 'macd_line' in technical_item:
+                    integrated_item['macd_line'] = technical_item['macd_line']
+                if 'macd_signal' in technical_item:
+                    integrated_item['macd_signal'] = technical_item['macd_signal']
+                if 'macd_histogram' in technical_item:
+                    integrated_item['macd_histogram'] = technical_item['macd_histogram']
+                if 'kdj_k' in technical_item:
+                    integrated_item['kdj_k'] = technical_item['kdj_k']
+                if 'kdj_d' in technical_item:
+                    integrated_item['kdj_d'] = technical_item['kdj_d']
+                if 'kdj_j' in technical_item:
+                    integrated_item['kdj_j'] = technical_item['kdj_j']
+                if 'bb_upper' in technical_item:
+                    integrated_item['bb_upper'] = technical_item['bb_upper']
+                if 'bb_middle' in technical_item:
+                    integrated_item['bb_middle'] = technical_item['bb_middle']
+                if 'bb_lower' in technical_item:
+                    integrated_item['bb_lower'] = technical_item['bb_lower']
                 
                 integrated_data.append(integrated_item)
+
+        # 转换ObjectId
+        integrated_data = convert_object_id(integrated_data)
+        stock_name = convert_object_id(stock_name)
 
         return {
             "code": code,
@@ -239,13 +322,59 @@ async def get_stock_integrated_data(
         logger.error(f"Error getting integrated data for {code}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@router.get("/{code}/stock-info")
+async def get_stock_detailed_info(code: str):
+    """获取股票详细信息，包括基本信息和公司详细信息"""
+    try:
+        mongo_service = MongoDBService()
+        
+        if code.isdigit():
+            code = get_market_and_code(code)
+        
+        # 获取股票基本信息
+        stock_info = await mongo_service.find_one('stock_info', {'code': code})
+        if not stock_info:
+            raise HTTPException(status_code=404, detail="Stock not found")
+        
+        # 获取公司详细信息
+        company_info = await mongo_service.find_one('stock_basic_info', {'ts_code': stock_info.get('ts_code')})
+        
+        # 转换ObjectId
+        stock_info = convert_object_id(stock_info)
+        company_info = convert_object_id(company_info)
+        
+        return {
+            "stock_info": stock_info,
+            "company_info": company_info
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting detailed info for {code}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @router.post("/trigger-fetch")
 async def trigger_data_fetch():
     """Manually trigger data fetch"""
     try:
         data_service = DataService()
         result = await data_service.trigger_immediate_fetch()
+        # 转换可能的ObjectId
+        result = convert_object_id(result)
         return result
     except Exception as e:
         logger.error(f"Error triggering data fetch: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.post("/stop-fetch")
+async def stop_data_fetch():
+    """Stop ongoing data fetch"""
+    try:
+        data_service = DataService()
+        # 设置标志以停止数据获取
+        data_service.is_fetching = False
+        logger.info("Data fetch stop command received")
+        return {"status": "success", "message": "Data fetch stop command sent"}
+    except Exception as e:
+        logger.error(f"Error stopping data fetch: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")

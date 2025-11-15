@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Button, Progress, Space, message, List, Tag, Statistic, Row, Col, Input, DatePicker } from 'antd'
-import { SyncOutlined } from '@ant-design/icons'
+import { Card, Button, Progress, Space, message, List, Tag, Statistic, Row, Col } from 'antd'
+import { SyncOutlined, StopOutlined } from '@ant-design/icons'
 import { stockService, technicalAnalysisService } from '../services/api'
-
-const { RangePicker } = DatePicker
 
 const DataFetch = () => {
   const [progress, setProgress] = useState(0)
@@ -11,14 +9,12 @@ const DataFetch = () => {
   const [fetchStatus, setFetchStatus] = useState('idle')
   const [currentStock, setCurrentStock] = useState('')
   const [failedStocks, setFailedStocks] = useState([])
-  // CCI更新相关状态
-  const [stockCode, setStockCode] = useState('')
-  const [dateRange, setDateRange] = useState([])
-  const [isCciUpdating, setIsCciUpdating] = useState(false)
-  const [cciUpdateResult, setCciUpdateResult] = useState(null)
-  // 批量更新所有股票CCI相关状态
-  const [isBatchCciUpdating, setIsBatchCciUpdating] = useState(false)
-  const [batchCciResult, setBatchCciResult] = useState(null)
+  // 批量更新所有股票指标相关状态
+  const [isBatchIndicatorsUpdating, setIsBatchIndicatorsUpdating] = useState(false)
+  const [batchIndicatorsResult, setBatchIndicatorsResult] = useState(null)
+  // 重新计算所有股票指标相关状态
+  const [isRecomputeIndicatorsUpdating, setIsRecomputeIndicatorsUpdating] = useState(false)
+  const [recomputeIndicatorsResult, setRecomputeIndicatorsResult] = useState(null)
 
   const fetchProgress = async () => {
     try {
@@ -50,46 +46,26 @@ const DataFetch = () => {
     }
   }
 
-  const handleUpdateCci = async () => {
-    if (!stockCode) {
-      message.error('Please enter stock code')
-      return
-    }
-
+  const handleStopFetch = async () => {
     try {
-      setIsCciUpdating(true)
-      setCciUpdateResult(null)
-      
-      const params = {
-        code: stockCode
-      }
-      
-      // 添加日期范围参数（如果选择了）
-      if (dateRange.length === 2) {
-        params.start_date = dateRange[0].format('YYYY-MM-DD')
-        params.end_date = dateRange[1].format('YYYY-MM-DD')
-      }
-
-      const response = await stockService.updateStockCci(params)
-      setCciUpdateResult(response.data)
-      message.success(`CCI updated successfully. Updated records: ${response.data.updated_count}`)
+      await stockService.stopDataFetch()
+      message.success('Data fetch stop command sent successfully')
+      setIsRunning(false)
     } catch (error) {
-      message.error(`Failed to update CCI: ${error.response?.data?.detail || 'Unknown error'}`)
-    } finally {
-      setIsCciUpdating(false)
+      message.error('Failed to stop data fetch')
     }
   }
 
-  const handleUpdateAllStocksCci = async () => {
+  const handleUpdateAllStocksIndicators = async () => {
     try {
-      setIsBatchCciUpdating(true)
-      setBatchCciResult(null)
+      setIsBatchIndicatorsUpdating(true)
+      setBatchIndicatorsResult(null)
       
-      message.info('开始批量更新所有股票的CCI指标，请耐心等待...')
+      message.info('开始批量更新所有股票的所有技术指标，请耐心等待...')
       
       // 调用批量更新API
-      const response = await technicalAnalysisService.updateAllStocksCci()
-      setBatchCciResult(response.data || response)
+      const response = await technicalAnalysisService.updateAllStocksIndicators()
+      setBatchIndicatorsResult(response.data || response)
       
       if (response.success || response.data?.success) {
         message.success(`批量更新完成！成功: ${response.data?.results?.success_count || 0}, 失败: ${response.data?.results?.failed_count || 0}`)
@@ -97,9 +73,32 @@ const DataFetch = () => {
         message.error(`批量更新失败: ${response.message || 'Unknown error'}`)
       }
     } catch (error) {
-      message.error(`Failed to update all stocks CCI: ${error.response?.data?.detail || 'Unknown error'}`)
+      message.error(`Failed to update all stocks indicators: ${error.response?.data?.detail || 'Unknown error'}`)
     } finally {
-      setIsBatchCciUpdating(false)
+      setIsBatchIndicatorsUpdating(false)
+    }
+  }
+
+  const handleRecomputeAllStocksIndicators = async () => {
+    try {
+      setIsRecomputeIndicatorsUpdating(true)
+      setRecomputeIndicatorsResult(null)
+      
+      message.info('开始重新计算所有股票的所有技术指标，请耐心等待...')
+      
+      // 调用重新计算API
+      const response = await technicalAnalysisService.recomputeAllStocksIndicators()
+      setRecomputeIndicatorsResult(response.data || response)
+      
+      if (response.success || response.data?.success) {
+        message.success(`重新计算完成！成功: ${response.data?.results?.success_count || 0}, 失败: ${response.data?.results?.failed_count || 0}`)
+      } else {
+        message.error(`重新计算失败: ${response.message || 'Unknown error'}`)
+      }
+    } catch (error) {
+      message.error(`Failed to recompute all stocks indicators: ${error.response?.data?.detail || 'Unknown error'}`)
+    } finally {
+      setIsRecomputeIndicatorsUpdating(false)
     }
   }
 
@@ -136,6 +135,15 @@ const DataFetch = () => {
                   disabled={isRunning}
                 >
                   Trigger Fetch
+                </Button>
+                <Button
+                  type="primary"
+                  danger
+                  icon={<StopOutlined />}
+                  onClick={handleStopFetch}
+                  disabled={!isRunning}
+                >
+                  Stop Fetch
                 </Button>
               </Space>
             </div>
@@ -187,84 +195,46 @@ const DataFetch = () => {
           </Row>
         </Card>
 
-        <Card title="Update Stock CCI">
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
-            <Space>
-              <span>Stock Code:</span>
-              <Input 
-                placeholder="Enter stock code (e.g., 600000)" 
-                value={stockCode}
-                onChange={(e) => setStockCode(e.target.value)}
-                style={{ width: 200 }}
-              />
-              <span>Date Range (optional):</span>
-              <RangePicker 
-                onChange={(dates) => setDateRange(dates || [])}
-                style={{ width: 300 }}
-              />
-              <Button
-                type="primary"
-                icon={<SyncOutlined />}
-                onClick={handleUpdateCci}
-                disabled={isCciUpdating}
-                loading={isCciUpdating}
-              >
-                Update CCI
-              </Button>
-            </Space>
+        <Card title="Batch Update All Stocks Indicators">
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <p>一键更新所有股票的所有技术指标值</p>
+            <Button 
+              type="primary" 
+              onClick={handleUpdateAllStocksIndicators}
+              loading={isBatchIndicatorsUpdating}
+            >
+              Update All Stocks Indicators
+            </Button>
             
-            {cciUpdateResult && (
-              <div style={{ marginTop: 16, padding: 16, backgroundColor: '#f0f9ff', borderRadius: 4 }}>
-                <h4>Update Results:</h4>
-                <p>Stock: {cciUpdateResult.code}</p>
-                <p>Updated Records: {cciUpdateResult.updated_count}</p>
-                <p>Process Time: {cciUpdateResult.process_time_ms} ms</p>
-                {cciUpdateResult.message && <p>Message: {cciUpdateResult.message}</p>}
+            {batchIndicatorsResult && (
+              <div style={{ marginTop: 16 }}>
+                <strong>批量更新结果:</strong>
+                <div>总股票数: {batchIndicatorsResult.results?.total_count}</div>
+                <div>成功: {batchIndicatorsResult.results?.success_count}</div>
+                <div>失败: {batchIndicatorsResult.results?.failed_count}</div>
               </div>
             )}
           </Space>
         </Card>
-        
-        <Card title="Batch Update All Stocks CCI">
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
-            <Space>
-              <p style={{ marginRight: '16px' }}>一键更新所有股票的CCI指标，自动从各股票最新CCI日期更新到今日</p>
-              <Button
-                type="primary"
-                danger
-                icon={<SyncOutlined />}
-                onClick={handleUpdateAllStocksCci}
-                disabled={isBatchCciUpdating}
-                loading={isBatchCciUpdating}
-              >
-                一键更新所有股票CCI
-              </Button>
-            </Space>
+
+        <Card title="Recompute All Stocks Indicators">
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <p>重新计算所有股票的所有技术指标值（从头开始计算，不考虑最新日期）</p>
+            <Button 
+              type="primary" 
+              danger
+              onClick={handleRecomputeAllStocksIndicators}
+              loading={isRecomputeIndicatorsUpdating}
+            >
+              Recompute All Stocks Indicators
+            </Button>
             
-            {batchCciResult && (
-              <div style={{ marginTop: 16, padding: 16, backgroundColor: '#f0f9ff', borderRadius: 4 }}>
-                <h4>Batch Update Results:</h4>
-                <p>Total Stocks: {batchCciResult.results?.total_count || 0}</p>
-                <p>Successfully Updated: {batchCciResult.results?.success_count || 0}</p>
-                <p>Failed to Update: {batchCciResult.results?.failed_count || 0}</p>
-                {batchCciResult.message && <p>Message: {batchCciResult.message}</p>}
-                
-                {batchCciResult.results?.failed_stocks && batchCciResult.results.failed_stocks.length > 0 && (
-                  <div style={{ marginTop: 16 }}>
-                    <h5 style={{ color: '#ff4d4f' }}>Failed Stocks:</h5>
-                    <List
-                      dataSource={batchCciResult.results.failed_stocks}
-                      renderItem={(item) => (
-                        <List.Item>
-                          <List.Item.Meta
-                            title={item.code}
-                            description={`Error: ${item.error}`}
-                          />
-                        </List.Item>
-                      )}
-                    />
-                  </div>
-                )}
+            {recomputeIndicatorsResult && (
+              <div style={{ marginTop: 16 }}>
+                <strong>重新计算结果:</strong>
+                <div>总股票数: {recomputeIndicatorsResult.results?.total_count}</div>
+                <div>成功: {recomputeIndicatorsResult.results?.success_count}</div>
+                <div>失败: {recomputeIndicatorsResult.results?.failed_count}</div>
               </div>
             )}
           </Space>

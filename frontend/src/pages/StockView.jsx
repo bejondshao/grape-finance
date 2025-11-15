@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Form, Input, Button, Card, Spin, Tooltip, Radio } from 'antd';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useRef } from 'react';
+import { Form, Input, Button, Card, Spin, Tooltip, Radio, Select } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import { stockService, technicalAnalysisService } from '../services/api';
 import dayjs from 'dayjs';
@@ -17,10 +17,12 @@ const StockView = () => {
   const [isDragging, setIsDragging] = useState(false); // 是否正在拖拽
   const [dragStart, setDragStart] = useState({ x: 0, dataIndex: 0 }); // 拖拽起始位置
   const [timeFrame, setTimeFrame] = useState('daily'); // 时间周期: daily, weekly, monthly, quarterly
+  const [searchResults, setSearchResults] = useState([]); // 搜索结果
+  const [searchLoading, setSearchLoading] = useState(false); // 搜索加载状态
+  const [stockInfo, setStockInfo] = useState(null); // 股票详细信息
   const chartContainerRef = useRef(null);
   const canvasRef = useRef(null);
-
-
+  const searchTimeoutRef = useRef(null); // 搜索防抖定时器
 
   // 根据时间周期聚合数据
   const aggregateData = (data, frame) => {
@@ -143,6 +145,71 @@ const StockView = () => {
     return `${getMarketPrefix(code)}.${code}`;
   };
 
+  // 绘制K线图上的CCI信号箭头
+  const drawCCISignalsOnKLine = (ctx, cciPoints, margin) => {
+    // 遍历CCI点，检测交叉信号
+    for (let i = 1; i < cciPoints.length; i++) {
+      const prevPoint = cciPoints[i - 1];
+      const currPoint = cciPoints[i];
+      
+      // 检查CCI上穿-100（从下往上穿过-100线）
+      if (prevPoint.cci <= -100 && currPoint.cci > -100) {
+        // 在K线下方绘制红色上箭头（买入信号）
+        drawSignalArrow(ctx, currPoint.x, currPoint.yLow + 20, 'up', '#ff0000'); // 红色上箭头
+      }
+      
+      // 检查CCI下穿100（从上往下穿过100线）
+      if (prevPoint.cci >= 100 && currPoint.cci < 100) {
+        // 在K线上方绘制绿色下箭头（卖出信号）
+        drawSignalArrow(ctx, currPoint.x, currPoint.yHigh - 20, 'down', '#00ff00'); // 绿色下箭头
+      }
+    }
+  };
+
+  // 绘制CCI信号箭头
+  const drawCCISignals = (ctx, cciPoints, yCci100, yCciMinus100, margin) => {
+    // 遍历CCI点，检测交叉信号
+    for (let i = 1; i < cciPoints.length; i++) {
+      const prevPoint = cciPoints[i - 1];
+      const currPoint = cciPoints[i];
+      
+      // 检查CCI上穿-100（从下往上穿过-100线）
+      if (prevPoint.cci <= -100 && currPoint.cci > -100) {
+        drawSignalArrow(ctx, currPoint.x, yCciMinus100, 'up', '#ff0000'); // 红色上箭头
+      }
+      
+      // 检查CCI下穿100（从上往下穿过100线）
+      if (prevPoint.cci >= 100 && currPoint.cci < 100) {
+        drawSignalArrow(ctx, currPoint.x, yCci100, 'down', '#00ff00'); // 绿色下箭头
+      }
+    }
+  };
+
+  // 绘制信号箭头
+  const drawSignalArrow = (ctx, x, y, direction, color) => {
+    const arrowSize = 8; // 缩小箭头尺寸
+    
+    ctx.fillStyle = color;
+    
+    if (direction === 'up') {
+      // 绘制向上的箭头
+      ctx.beginPath();
+      ctx.moveTo(x, y - arrowSize); // 箭头顶部
+      ctx.lineTo(x - arrowSize/2, y); // 左下角
+      ctx.lineTo(x + arrowSize/2, y); // 右下角
+      ctx.closePath();
+      ctx.fill();
+    } else if (direction === 'down') {
+      // 绘制向下的箭头
+      ctx.beginPath();
+      ctx.moveTo(x, y + arrowSize); // 箭头底部
+      ctx.lineTo(x - arrowSize/2, y); // 左上角
+      ctx.lineTo(x + arrowSize/2, y); // 右上角
+      ctx.closePath();
+      ctx.fill();
+    }
+  };
+
   // 加载股票数据
   const loadStockData = async (code) => {
     const normalizedStockCode = normalizeStockCode(code);
@@ -153,7 +220,14 @@ const StockView = () => {
         fields: 'date,open,close,high,low,volume,amount,turn,peTTM,pbMRQ,psTTM,pcfNcfTTM,preclose,cci'
       });
 
-      const formattedHistoryData = response.data.map(item => {
+      console.log('Integrated data response:', response); // 调试日志
+
+      // 检查响应结构并正确提取数据
+      const responseData = response.data || response;
+      const stockData = Array.isArray(responseData) ? responseData : (responseData.data || []);
+      const stockName = (responseData.name || responseData.stockName || '');
+
+      const formattedHistoryData = stockData.map(item => {
         const open = parseFloat(item.open);
         const close = parseFloat(item.close);
         const preclose = parseFloat(item.preclose);
@@ -182,7 +256,8 @@ const StockView = () => {
 
       // 返回完整的响应数据，包括股票名称
       return {
-        ...response,
+        code: normalizedStockCode,
+        name: stockName,
         data: formattedHistoryData.reverse() // 按日期升序排列
       };
     } catch (error) {
@@ -191,11 +266,99 @@ const StockView = () => {
     }
   };
 
+  // 加载股票详细信息
+  const loadStockInfo = async (code) => {
+    const normalizedStockCode = normalizeStockCode(code);
+    
+    try {
+      const response = await stockService.getStockDetailedInfo(normalizedStockCode);
+      console.log('Stock detailed info response:', response); // 调试日志
+      return response;
+    } catch (error) {
+      console.error('加载股票详细信息失败:', error);
+      return null;
+    }
+  };
+
   // 查询股票数据
   const handleQuery = async (values) => {
     const { stockCode } = values;
     if (!stockCode) return;
 
+    // 如果输入的是6位数字，先进行搜索看是否有匹配项
+    if (/^\d{6}$/.test(stockCode)) {
+      try {
+        const response = await stockService.getStocks({ code: stockCode });
+        console.log('Stock query response:', response); // 调试日志
+        // 检查响应结构并正确提取数据
+        const responseData = response.data || response;
+        const stocks = Array.isArray(responseData) ? responseData : (responseData.stocks || []);
+        
+        // 如果找到了匹配的股票，使用第一个结果
+        if (stocks.length > 0) {
+          const selectedStock = stocks[0];
+          setLoading(true);
+          const normalizedStockCode = normalizeStockCode(selectedStock.code);
+          setSelectedCode(normalizedStockCode);
+
+          try {
+            // 获取整合的股票数据（包括日线数据和技术指标）
+            const response = await loadStockData(selectedStock.code);
+            console.log('Stock data response:', response); // 调试日志
+            
+            // 获取股票详细信息
+            const stockInfoResponse = await loadStockInfo(selectedStock.code);
+            console.log('Stock info response:', stockInfoResponse); // 调试日志
+            setStockInfo(stockInfoResponse.data);
+            
+            // 从整合数据响应中获取股票名称
+            const stockName = response.name || '';
+
+            setOriginalData(response.data);
+            setStockName(stockName);
+            
+            // 根据当前时间周期聚合数据
+            const aggregatedData = aggregateData(response.data, timeFrame);
+            setStockData(aggregatedData);
+            
+            // 初始化缩放范围为最近一年的数据
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setFullYear(endDate.getFullYear() - 1);
+            
+            // 找到对应的索引范围
+            let startIndex = 0;
+            let endIndex = Math.max(0, aggregatedData.length - 1);
+            
+            // 寻找开始索引（一年以前的数据）
+            for (let i = 0; i < aggregatedData.length; i++) {
+              if (new Date(aggregatedData[i].date) >= startDate) {
+                startIndex = i;
+                break;
+              }
+            }
+            
+            setZoomRange({ 
+              start: startIndex,
+              end: endIndex
+            });
+            
+            // 更新表单值为选中的股票代码
+            form.setFieldsValue({ stockCode: selectedStock.code });
+          } catch (error) {
+            console.error('查询失败:', error);
+            alert('查询失败，请检查股票代码是否正确');
+          } finally {
+            setLoading(false);
+          }
+          return;
+        }
+      } catch (error) {
+        console.error('搜索失败:', error);
+      }
+    }
+
+    // 原有的查询逻辑
     setLoading(true);
     const normalizedStockCode = normalizeStockCode(stockCode);
     setSelectedCode(normalizedStockCode);
@@ -203,6 +366,12 @@ const StockView = () => {
     try {
       // 获取整合的股票数据（包括日线数据和技术指标）
       const response = await loadStockData(stockCode);
+      console.log('Stock data response:', response); // 调试日志
+      
+      // 获取股票详细信息
+      const stockInfoResponse = await loadStockInfo(stockCode);
+      console.log('Stock info response:', stockInfoResponse); // 调试日志
+      setStockInfo(stockInfoResponse.data);
       
       // 从整合数据响应中获取股票名称
       const stockName = response.name || '';
@@ -244,6 +413,79 @@ const StockView = () => {
     }
   };
 
+  // 搜索股票（支持拼音缩写）
+  const handleSearch = async (value) => {
+    // 清除之前的定时器
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // 如果输入为空，清空搜索结果
+    if (!value) {
+      setSearchResults([]);
+      return;
+    }
+
+    // 如果输入的是6位数字，立即查询而不使用防抖
+    if (/^\d{6}$/.test(value)) {
+      setSearchLoading(true);
+      try {
+        const response = await stockService.getStocks({ code: value });
+        console.log('Stock search response:', response); // 调试日志
+        // 检查响应结构并正确提取数据
+        const responseData = response.data || response;
+        const stocks = Array.isArray(responseData) ? responseData : (responseData.stocks || []);
+        setSearchResults(stocks);
+        
+        // 如果只有一个匹配结果，自动选择它
+        if (stocks.length === 1) {
+          form.setFieldsValue({ stockCode: stocks[0].code });
+          setTimeout(() => {
+            handleQuery({ stockCode: stocks[0].code });
+          }, 0);
+        }
+      } catch (error) {
+        console.error('搜索失败:', error);
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+      return;
+    }
+
+    // 对于非6位数字的输入(如拼音缩写)，使用防抖定时器
+    searchTimeoutRef.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const response = await stockService.getStocks({ name: value });
+        console.log('Stock search by name response:', response); // 调试日志
+        // 检查响应结构并正确提取数据
+        const responseData = response.data || response;
+        const stocks = Array.isArray(responseData) ? responseData : (responseData.stocks || []);
+        setSearchResults(stocks);
+        
+        // 如果只有一个匹配结果，自动选择它
+        if (stocks.length === 1) {
+          form.setFieldsValue({ stockCode: stocks[0].code });
+          setTimeout(() => {
+            handleQuery({ stockCode: stocks[0].code });
+          }, 0);
+        }
+      } catch (error) {
+        console.error('搜索失败:', error);
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300); // 300ms防抖延迟
+  };
+
+  // 选择股票
+  const handleSelect = (value) => {
+    form.setFieldsValue({ stockCode: value });
+    handleQuery({ stockCode: value });
+  };
+
   // 当时间周期改变时重新聚合数据
   useEffect(() => {
     if (originalData.length > 0) {
@@ -273,8 +515,6 @@ const StockView = () => {
       });
     }
   }, [timeFrame, originalData]);
-
-
 
   // 处理鼠标滚轮缩放
   const handleWheel = (e) => {
@@ -666,6 +906,7 @@ const StockView = () => {
       
       // 绘制K线
       const barWidth = Math.max(1, chartWidth / pointsCount - 1);
+      const kLineCCIPoints = []; // 用于存储CCI点，以便在K线图上绘制信号箭头
       for (let i = 0; i < pointsCount; i++) {
         const point = visibleData[i];
         const x = margin.left + (i * chartWidth / (pointsCount - 1));
@@ -698,7 +939,21 @@ const StockView = () => {
           ctx.lineTo(x + barWidth/2, rectY);
           ctx.stroke();
         }
+        
+        // 收集CCI点信息用于在K线图上绘制信号箭头
+        if (point.cci !== null && point.cci !== undefined && !isNaN(point.cci)) {
+          kLineCCIPoints.push({ 
+            x, 
+            cci: point.cci, 
+            index: i,
+            yHigh,
+            yLow
+          });
+        }
       }
+      
+      // 在K线图上绘制CCI信号箭头
+      drawCCISignalsOnKLine(ctx, kLineCCIPoints, margin);
       
       // 绘制交易量柱状图（带颜色深浅表示成交额大小）
       for (let i = 0; i < pointsCount; i++) {
@@ -728,7 +983,7 @@ const StockView = () => {
       const yCciMinus100 = margin.top + kLineHeight + gap + volumeHeight + gap + 
                           ((maxCci - (-100)) / cciRange) * cciHeight;
       
-      ctx.strokeStyle = '#ff0000'; // 红色，更明显
+      ctx.strokeStyle = '#888888'; // 灰色，符合CCI参考线视觉规范
       ctx.lineWidth = 1.5; // 稍粗的线条
       ctx.setLineDash([]); // 实线
       
@@ -753,6 +1008,7 @@ const StockView = () => {
       
       let firstPoint = true;
       let hasValidCciData = false;
+      const cciPoints = []; // 存储CCI点用于绘制信号箭头
       for (let i = 0; i < pointsCount; i++) {
         const point = visibleData[i];
         // 检查CCI值是否有效
@@ -764,6 +1020,9 @@ const StockView = () => {
         
         // 检查坐标是否有效
         if (isNaN(x) || isNaN(y)) continue;
+        
+        // 存储CCI点用于后续处理
+        cciPoints.push({ x, y, cci: point.cci, index: i });
         
         if (firstPoint) {
           ctx.moveTo(x, y);
@@ -777,6 +1036,9 @@ const StockView = () => {
       // 只有当有有效数据时才绘制线条
       if (hasValidCciData) {
         ctx.stroke();
+        
+        // 绘制CCI信号箭头
+        drawCCISignals(ctx, cciPoints, yCci100, yCciMinus100, margin);
       }
       ctx.lineWidth = 1;
       
@@ -924,6 +1186,37 @@ const StockView = () => {
     );
   };
 
+  const StockDetailView = ({ stockInfo }) => {
+    if (!stockInfo) return null;
+
+    const { stock_info, company_info } = stockInfo;
+
+    // 创建一个包含指定信息的数组
+    const infoItems = [
+      { label: '所属行业', value: stock_info?.industry },
+      { label: '所在地区', value: stock_info?.area },
+      { label: '公司名称', value: company_info?.com_name },
+      { label: '主营业务', value: company_info?.main_business },
+      { label: '公司介绍', value: company_info?.introduction },
+    ];
+
+    return (
+      <div style={{ marginBottom: 20 }}>
+        <h3>股票详细信息</h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <tbody>
+            {infoItems.map((item, index) => (
+              <tr key={index}>
+                <td style={{ border: '1px solid #ddd', padding: '8px', width: '15%' }}><strong>{item.label}</strong></td>
+                <td style={{ border: '1px solid #ddd', padding: '8px' }}>{item.value || '暂无信息'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
   return (
     <div style={{ padding: 24 }}>
       <h1 style={{ marginBottom: 24 }}>股票查看</h1>
@@ -931,7 +1224,34 @@ const StockView = () => {
       <Card style={{ marginBottom: 24 }}>
         <Form form={form} onFinish={handleQuery} layout="inline">
           <Form.Item name="stockCode" label="股票代码" rules={[{ required: true, message: '请输入股票代码' }]}>
-            <Input placeholder="例如：sh.600066" style={{ width: 300 }} />
+            <Select
+              showSearch
+              placeholder="输入6位数字或拼音缩写搜索股票"
+              style={{ width: 300 }}
+              onSearch={handleSearch}
+              onSelect={handleSelect}
+              loading={searchLoading}
+              optionFilterProp="children"
+              filterOption={false}
+              notFoundContent={searchLoading ? <Spin size="small" /> : null}
+              allowClear
+              onKeyDown={(e) => {
+                // 当用户按下回车键时，如果输入的是6位数字，直接查询
+                if (e.key === 'Enter') {
+                  const value = e.target.value;
+                  if (/^\d{6}$/.test(value)) {
+                    e.preventDefault();
+                    handleQuery({ stockCode: value });
+                  }
+                }
+              }}
+            >
+              {searchResults.map(stock => (
+                <Select.Option key={stock.code} value={stock.code}>
+                  {stock.code} - {stock.code_name}
+                </Select.Option>
+              ))}
+            </Select>
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" icon={<SearchOutlined />} loading={loading}>
@@ -944,6 +1264,7 @@ const StockView = () => {
       {selectedCode && (
         <Card title={`${selectedCode} - ${stockName}`} style={{ marginBottom: 24 }}>
           <Spin spinning={loading} tip="加载图表数据...">
+            {stockInfo && <StockDetailView stockInfo={stockInfo} />}
             {renderChart()}
           </Spin>
         </Card>

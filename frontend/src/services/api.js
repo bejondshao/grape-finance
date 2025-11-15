@@ -1,82 +1,71 @@
 import axios from 'axios'
 
-const API_BASE_URL = '/api'
+const API_BASE_URL = 'http://localhost:8000/api'
 
+// 创建axios实例
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  timeout: 10000,
 })
 
-// Request interceptor
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
-
-// Response interceptor
-api.interceptors.response.use(
-  (response) => {
-    return response.data
-  },
-  (error) => {
-    console.error('API Error:', error)
-    return Promise.reject(error)
-  }
-)
-
+// 股票相关API
 export const stockService = {
-  getStocks: (params) => api.get('/stocks', { params }),
-  getStockHistory: (code, params) => api.get(`/stocks/${code}/daily`, { params }),
+  getStocks: (params) => api.get(`/stocks`, { params }),
+  searchStocks: (keyword) => api.get(`/stocks/search/${keyword}`),
+  getStockData: (code) => api.get(`/stocks/${code}`),
   getStockIntegratedData: (code, params) => api.get(`/stocks/${code}/integrated-data`, { params }),
-  triggerFetch: () => api.post('/stocks/trigger-fetch'),
-  getFetchProgress: () => api.get('/stocks/fetch-progress'),
-  updateStockCci: (params) => api.post('/technical/update-cci', params),
+  getStockDetailedInfo: (code) => api.get(`/stocks/${code}/stock-info`),
+  triggerDataFetch: () => api.post('/stocks/trigger-fetch'),
+  stopDataFetch: () => api.post('/stocks/stop-fetch'), // 添加停止获取数据的API
 }
 
+// 技术分析相关API
 export const technicalAnalysisService = {
-  getIndicators: () => api.get('/technical/indicators'),
-  createIndicator: (data) => api.post('/technical/config', data),
-  updateIndicator: (id, data) => api.put(`/technical/config/${id}`, data),
+  getStockData: (code, limit, indicators) => api.get(`/technical/${code}`, { params: { limit, indicators } }),
+  updateCCI: (code, startDate, endDate) => api.post(`/technical/${code}/update-cci`, { start_date: startDate, end_date: endDate }),
+  getIndicators: (stockCode) => api.get('/technical/indicators', { params: { stock_code: stockCode } }),
+  getConfiguredIndicators: () => api.get('/technical/config'), // 获取配置的指标列表
+  createIndicator: (indicator) => api.post('/technical/config', indicator),
+  updateIndicator: (id, indicator) => api.put(`/technical/config`, indicator),
   deleteIndicator: (id) => api.delete(`/technical/config/${id}`),
-  calculateIndicators: (code, params) => api.get(`/technical/indicators`, { params: { ...params, stock_code: code } }),
   updateAllStocksCci: () => api.post('/technical/update-all-cci'),
+  updateAllStocksIndicators: () => api.post('/technical/update-all-indicators'),
+  recomputeAllStocksIndicators: () => api.post('/technical/recompute-all-indicators'),
 }
 
-export const tradingStrategyService = {
-  getStrategies: () => api.get('/trading-strategies'),
-  createStrategy: (data) => api.post('/trading-strategies', data),
-  updateStrategy: (id, data) => api.put(`/trading-strategies/${id}`, data),
-  deleteStrategy: (id) => api.delete(`/trading-strategies/${id}`),
-  executeStrategy: (strategyId) => api.post(`/trading-strategies/${strategyId}/execute`),
-}
-
-export const stockCollectionService = {
-  getCollection: (params) => api.get('/stock-collection', { params }),
-  addToCollection: (data) => api.post('/stock-collection', data),
-  updateCollection: (id, data) => api.put(`/stock-collection/${id}`, data),
-  removeFromCollection: (id) => api.delete(`/stock-collection/${id}`),
-}
-
+// 交易记录相关API
 export const tradingRecordService = {
   getRecords: (params) => api.get('/trading-records', { params }),
-  createRecord: (data) => api.post('/trading-records', data),
-  updateRecord: (id, data) => api.put(`/trading-records/${id}`, data),
+  createRecord: (record) => api.post('/trading-records', record),
+  updateRecord: (id, record) => api.put(`/trading-records/${id}`, record),
   deleteRecord: (id) => api.delete(`/trading-records/${id}`),
-  calculateProfit: (params) => api.get('/trading-records/profit', { params }),
 }
 
+// 交易策略相关API
+export const tradingStrategyService = {
+  getStrategies: () => api.get('/trading-strategies/strategies'),
+  createStrategy: (strategy) => api.post('/trading-strategies/strategies', strategy),
+  createRightSideStrategy: (params) => api.post('/trading-strategies/strategies/right_side', params),
+  updateStrategy: (id, strategy) => api.put(`/trading-strategies/strategies/${id}`, strategy),
+  deleteStrategy: (id) => api.delete(`/trading-strategies/strategies/${id}`),
+  executeStrategy: (id) => api.post(`/trading-strategies/evaluate`),
+  executeRightSideStrategy: () => api.post(`/trading-strategies/evaluate/right_side`),
+}
+
+// 系统配置相关API
 export const configurationService = {
-  getConfigs: (params) => api.get('/configurations', { params }),
-  updateConfig: (key, data) => api.put(`/configurations/${key}`, data),
-  createConfig: (data) => api.post('/configurations', data),
+  getConfigs: (params) => api.get('/config', { params }),
+  createConfig: (config) => api.post('/config', config),
+  updateConfig: (config) => api.put('/config', config),
+}
+
+// 自选股相关API
+export const stockCollectionService = {
+  getCollections: () => api.get('/stock-collections'),
+  addToCollection: (item) => api.post('/stock-collections', item),
+  updateCollection: (id, item) => api.put(`/stock-collections/${id}`, item),
+  deleteFromCollection: (id) => api.delete(`/stock-collections/${id}`),
+  moveCollection: (id, direction) => api.post(`/stock-collections/${id}/move`, { direction }),
 }
 
 export default api

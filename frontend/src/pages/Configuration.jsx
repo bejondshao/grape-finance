@@ -75,8 +75,14 @@ const Configuration = () => {
     setLoading(true)
     try {
       const response = await configurationService.getConfigs()
-      setConfigs(response.data || [])
+      // API 返回的数据结构是 { data: { configs: [...], total: ... } }
+      // 我们需要提取 configs 字段
+      const configsData = response && response.data && response.data.configs && Array.isArray(response.data.configs) 
+        ? response.data.configs 
+        : []
+      setConfigs(configsData)
     } catch (error) {
+      console.error('Failed to fetch configurations:', error)
       message.error('Failed to fetch configurations')
     } finally {
       setLoading(false)
@@ -101,11 +107,15 @@ const Configuration = () => {
 
   const handleDelete = async (id) => {
     try {
-      await configurationService.deleteConfig(id)
-      message.success('Configuration deleted successfully')
-      fetchConfigs()
+      // Configuration items don't have an ID in the current implementation
+      // We would need to identify them by category, sub_category, and key
+      message.warning('Delete functionality not implemented yet');
+      // await configurationService.deleteConfig(id)
+      // message.success('Configuration deleted successfully')
+      // fetchConfigs()
     } catch (error) {
-      message.error('Failed to delete configuration')
+      console.error('Failed to delete configuration:', error)
+      message.error('Failed to delete configuration: ' + (error.response?.data?.detail || error.message))
     }
   }
 
@@ -114,7 +124,7 @@ const Configuration = () => {
       const values = await form.validateFields()
 
       if (editingConfig) {
-        await configurationService.updateConfig(editingConfig.key, values)
+        await configurationService.updateConfig(values)
         message.success('Configuration updated successfully')
       } else {
         await configurationService.createConfig(values)
@@ -126,7 +136,8 @@ const Configuration = () => {
       form.resetFields()
       fetchConfigs()
     } catch (error) {
-      message.error('Failed to save configuration')
+      console.error('Failed to save configuration:', error)
+      message.error('Failed to save configuration: ' + (error.response?.data?.detail || error.message))
     }
   }
 
