@@ -217,7 +217,7 @@ const StockView = () => {
     try {
       // 获取整合的股票数据（包括日线数据和技术指标）
       const response = await stockService.getStockIntegratedData(normalizedStockCode, {
-        fields: 'date,open,close,high,low,volume,amount,turn,peTTM,pbMRQ,psTTM,pcfNcfTTM,preclose,cci'
+        fields: 'date,open,close,high,low,volume,amount,turn,peTTM,pbMRQ,psTTM,pcfNcfTTM,preclose,cci,kdj_k,kdj_d,kdj_j'
       });
 
       console.log('Integrated data response:', response); // 调试日志
@@ -249,6 +249,9 @@ const StockView = () => {
           psTTM: parseFloat(item.psTTM) || 0, // 市销率
           pcfNcfTTM: parseFloat(item.pcfNcfTTM) || 0, // 市现率
           cci: item.cci !== undefined && item.cci !== null ? item.cci : null, // CCI指标
+          kdj_k: item.kdj_k !== undefined && item.kdj_k !== null ? item.kdj_k : null, // KDJ K值
+          kdj_d: item.kdj_d !== undefined && item.kdj_d !== null ? item.kdj_d : null, // KDJ D值
+          kdj_j: item.kdj_j !== undefined && item.kdj_j !== null ? item.kdj_j : null, // KDJ J值
           change: change,        // 涨跌金额
           changePercent: changePercent  // 涨跌百分比
         };
@@ -678,7 +681,7 @@ const StockView = () => {
     const drawChart = () => {
       const container = chartContainerRef.current;
       const width = container.clientWidth;
-      const height = 700; // 增加高度以容纳CCI图表
+      const height = 800; // 增加高度以容纳CCI图表和KDJ图表
       
       // 清空容器
       container.innerHTML = '';
@@ -708,14 +711,16 @@ const StockView = () => {
       const chartWidth = width - margin.left - margin.right;
       const chartHeight = height - margin.top - margin.bottom;
       
-      // K线图区域高度 (45%)
-      const kLineHeight = chartHeight * 0.45;
-      // 图表间间距 (3%)
-      const gap = chartHeight * 0.03;
-      // 交易量图区域高度 (25%)
-      const volumeHeight = chartHeight * 0.25;
-      // CCI图表区域高度 (25%)
-      const cciHeight = chartHeight * 0.25;
+      // K线图区域高度 (35%)
+      const kLineHeight = chartHeight * 0.35;
+      // 图表间间距 (2%)
+      const gap = chartHeight * 0.02;
+      // 交易量图区域高度 (20%)
+      const volumeHeight = chartHeight * 0.20;
+      // CCI图表区域高度 (20%)
+      const cciHeight = chartHeight * 0.20;
+      // KDJ图表区域高度 (20%)
+      const kdjHeight = chartHeight * 0.20;
       
       // 获取当前显示的数据
       const visibleData = stockData.slice(zoomRange.start, zoomRange.end + 1);
@@ -757,6 +762,37 @@ const StockView = () => {
       
       const cciRange = maxCci - minCci || 1;
       
+      // 计算KDJ范围
+      const kValues = visibleData
+        .map(d => d.kdj_k)
+        .filter(k => k !== null && k !== undefined && !isNaN(k));
+        
+      const dValues = visibleData
+        .map(d => d.kdj_d)
+        .filter(d => d !== null && d !== undefined && !isNaN(d));
+        
+      const jValues = visibleData
+        .map(d => d.kdj_j)
+        .filter(j => j !== null && j !== undefined && !isNaN(j));
+      
+      let minKdj = 0;   // KDJ默认最小值
+      let maxKdj = 100; // KDJ默认最大值
+      
+      if (kValues.length > 0 || dValues.length > 0 || jValues.length > 0) {
+        const allKdjValues = [...kValues, ...dValues, ...jValues];
+        if (allKdjValues.length > 0) {
+          const actualMinKdj = Math.min(...allKdjValues);
+          const actualMaxKdj = Math.max(...allKdjValues);
+          // 确保范围包含0-100，但也要考虑实际数据范围
+          minKdj = Math.min(actualMinKdj, 0);
+          maxKdj = Math.max(actualMaxKdj, 100);
+        }
+      } else {
+        console.log('没有有效的KDJ数据');
+      }
+      
+      const kdjRange = maxKdj - minKdj || 1;
+      
 
       
       // 绘制背景网格
@@ -780,6 +816,11 @@ const StockView = () => {
         ctx.beginPath();
         ctx.moveTo(x, margin.top + kLineHeight + gap + volumeHeight + gap);
         ctx.lineTo(x, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight);
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.moveTo(x, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap);
+        ctx.lineTo(x, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + kdjHeight);
         ctx.stroke();
       }
       
@@ -810,6 +851,15 @@ const StockView = () => {
         ctx.stroke();
       }
       
+      // 水平网格线 - KDJ图区域
+      for (let i = 0; i <= 4; i++) {
+        const y = margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + (i * kdjHeight / 4);
+        ctx.beginPath();
+        ctx.moveTo(margin.left, y);
+        ctx.lineTo(margin.left + chartWidth, y);
+        ctx.stroke();
+      }
+      
       // 绘制坐标轴
       ctx.strokeStyle = '#000';
       ctx.lineWidth = 1;
@@ -819,17 +869,43 @@ const StockView = () => {
       ctx.moveTo(margin.left, margin.top);
       ctx.lineTo(margin.left, margin.top + kLineHeight);
       ctx.stroke();
+      // 右侧Y轴 - 价格轴
+      ctx.beginPath();
+      ctx.moveTo(margin.left + chartWidth, margin.top);
+      ctx.lineTo(margin.left + chartWidth, margin.top + kLineHeight);
+      ctx.stroke();
       
       // Y轴 - 交易量轴
       ctx.beginPath();
       ctx.moveTo(margin.left, margin.top + kLineHeight + gap);
       ctx.lineTo(margin.left, margin.top + kLineHeight + gap + volumeHeight);
       ctx.stroke();
+      // 右侧Y轴 - 交易量轴
+      ctx.beginPath();
+      ctx.moveTo(margin.left + chartWidth, margin.top + kLineHeight + gap);
+      ctx.lineTo(margin.left + chartWidth, margin.top + kLineHeight + gap + volumeHeight);
+      ctx.stroke();
       
       // Y轴 - CCI轴
       ctx.beginPath();
       ctx.moveTo(margin.left, margin.top + kLineHeight + gap + volumeHeight + gap);
       ctx.lineTo(margin.left, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight);
+      ctx.stroke();
+      // 右侧Y轴 - CCI轴
+      ctx.beginPath();
+      ctx.moveTo(margin.left + chartWidth, margin.top + kLineHeight + gap + volumeHeight + gap);
+      ctx.lineTo(margin.left + chartWidth, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight);
+      ctx.stroke();
+      
+      // Y轴 - KDJ轴
+      ctx.beginPath();
+      ctx.moveTo(margin.left, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap);
+      ctx.lineTo(margin.left, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + kdjHeight);
+      ctx.stroke();
+      // 右侧Y轴 - KDJ轴
+      ctx.beginPath();
+      ctx.moveTo(margin.left + chartWidth, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap);
+      ctx.lineTo(margin.left + chartWidth, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + kdjHeight);
       ctx.stroke();
       
       // X轴
@@ -848,6 +924,8 @@ const StockView = () => {
       ctx.lineTo(margin.left + chartWidth, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight);
       ctx.stroke();
       
+      // 移除了KDJ图表的X轴边框绘制
+      
       // 绘制Y轴标签 - 价格
       ctx.fillStyle = '#000';
       ctx.font = '12px Arial';
@@ -856,6 +934,9 @@ const StockView = () => {
         const price = maxPrice - (i * priceRange / 5);
         const y = margin.top + (i * kLineHeight / 5);
         ctx.fillText(price.toFixed(2), margin.left - 5, y + 4);
+        // 右侧Y轴标签 - 价格
+        ctx.textAlign = 'left';
+        ctx.fillText(price.toFixed(2), margin.left + chartWidth + 5, y + 4);
       }
       
       // 绘制Y轴标签 - 交易量
@@ -864,6 +945,9 @@ const StockView = () => {
         const y = margin.top + kLineHeight + gap + (i * volumeHeight / 3);
         const volumeInMillions = volume / 1000000;
         ctx.fillText(volumeInMillions >= 1 ? volumeInMillions.toFixed(1) + 'M' : volume.toFixed(0), margin.left - 5, y + 4);
+        // 右侧Y轴标签 - 交易量
+        ctx.textAlign = 'left';
+        ctx.fillText(volumeInMillions >= 1 ? volumeInMillions.toFixed(1) + 'M' : volume.toFixed(0), margin.left + chartWidth + 5, y + 4);
       }
       
       // 绘制Y轴标签 - CCI
@@ -871,7 +955,23 @@ const StockView = () => {
         const cciValue = maxCci - (i * cciRange / 3);
         const y = margin.top + kLineHeight + gap + volumeHeight + gap + (i * cciHeight / 3);
         ctx.fillText(cciValue.toFixed(0), margin.left - 5, y + 4);
+        // 右侧Y轴标签 - CCI
+        ctx.textAlign = 'left';
+        ctx.fillText(cciValue.toFixed(0), margin.left + chartWidth + 5, y + 4);
       }
+      
+      // 绘制Y轴标签 - KDJ
+      for (let i = 0; i <= 4; i++) {
+        const kdjValue = maxKdj - (i * kdjRange / 4);
+        const y = margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + (i * kdjHeight / 4);
+        ctx.fillText(kdjValue.toFixed(0), margin.left - 5, y + 4);
+        // 右侧Y轴标签 - KDJ
+        ctx.textAlign = 'left';
+        ctx.fillText(kdjValue.toFixed(0), margin.left + chartWidth + 5, y + 4);
+      }
+      
+      // 恢复文本对齐方式
+      ctx.textAlign = 'right';
       
       // 绘制X轴标签
       ctx.textAlign = 'center';
@@ -899,7 +999,7 @@ const StockView = () => {
               label = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
           }
           
-          const y = margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + 15;
+          const y = margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + kdjHeight + 15;
           ctx.fillText(label, x, y);
         }
       }
@@ -1042,6 +1142,140 @@ const StockView = () => {
       }
       ctx.lineWidth = 1;
       
+      // 绘制KDJ图表
+      // 绘制KDJ参考线 (20和80)
+      const yKdj20 = margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + 
+                    ((maxKdj - 20) / kdjRange) * kdjHeight;
+      const yKdj80 = margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + 
+                    ((maxKdj - 80) / kdjRange) * kdjHeight;
+      
+      ctx.strokeStyle = '#888888'; // 灰色参考线
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]); // 虚线
+      
+      // 20参考线
+      ctx.beginPath();
+      ctx.moveTo(margin.left, yKdj20);
+      ctx.lineTo(margin.left + chartWidth, yKdj20);
+      ctx.stroke();
+      
+      // 80参考线
+      ctx.beginPath();
+      ctx.moveTo(margin.left, yKdj80);
+      ctx.lineTo(margin.left + chartWidth, yKdj80);
+      ctx.stroke();
+      
+      ctx.setLineDash([]); // 恢复实线
+      ctx.lineWidth = 1;
+      
+      // 绘制KDJ曲线
+      // K线 - 红色
+      ctx.strokeStyle = '#ff0000';
+      ctx.lineWidth = 2;
+      
+      // 重置路径
+      ctx.beginPath();
+      
+      let prevKValid = false;
+      for (let i = 0; i < pointsCount; i++) {
+        const point = visibleData[i];
+        if (point.kdj_k === null || point.kdj_k === undefined || isNaN(point.kdj_k)) {
+          prevKValid = false;
+          continue;
+        }
+        
+        const x = margin.left + (i * chartWidth / (pointsCount - 1));
+        const y = margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + 
+                  ((maxKdj - point.kdj_k) / kdjRange) * kdjHeight;
+        
+        // 检查坐标是否有效
+        if (isNaN(x) || isNaN(y)) {
+          prevKValid = false;
+          continue;
+        }
+        
+        if (!prevKValid) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        prevKValid = true;
+      }
+      ctx.stroke();
+      
+      // D线 - 绿色
+      ctx.strokeStyle = '#00ff00';
+      ctx.lineWidth = 2;
+      
+      // 重置路径
+      ctx.beginPath();
+      
+      let prevDValid = false;
+      for (let i = 0; i < pointsCount; i++) {
+        const point = visibleData[i];
+        if (point.kdj_d === null || point.kdj_d === undefined || isNaN(point.kdj_d)) {
+          prevDValid = false;
+          continue;
+        }
+        
+        const x = margin.left + (i * chartWidth / (pointsCount - 1));
+        const y = margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + 
+                  ((maxKdj - point.kdj_d) / kdjRange) * kdjHeight;
+        
+        // 检查坐标是否有效
+        if (isNaN(x) || isNaN(y)) {
+          prevDValid = false;
+          continue;
+        }
+        
+        if (!prevDValid) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        prevDValid = true;
+      }
+      ctx.stroke();
+      
+      // J线 - 蓝色
+      ctx.strokeStyle = '#0000ff';
+      ctx.lineWidth = 2;
+      
+      // 重置路径
+      ctx.beginPath();
+      
+      let prevJValid = false;
+      for (let i = 0; i < pointsCount; i++) {
+        const point = visibleData[i];
+        if (point.kdj_j === null || point.kdj_j === undefined || isNaN(point.kdj_j)) {
+          prevJValid = false;
+          continue;
+        }
+        
+        const x = margin.left + (i * chartWidth / (pointsCount - 1));
+        const y = margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + 
+                  ((maxKdj - point.kdj_j) / kdjRange) * kdjHeight;
+        
+        // 检查坐标是否有效
+        if (isNaN(x) || isNaN(y)) {
+          prevJValid = false;
+          continue;
+        }
+        
+        if (!prevJValid) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        prevJValid = true;
+      }
+      // 在绘制前检查是否有有效的点
+      if (prevJValid) {
+        ctx.stroke();
+      }
+      
+      ctx.lineWidth = 1;
+      
       // 绘制鼠标悬停信息
       if (hoverInfo) {
         const { dataPoint, x, y, isInKLineArea, isInVolumeArea } = hoverInfo;
@@ -1067,6 +1301,11 @@ const StockView = () => {
         ctx.lineTo(x, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight);
         ctx.stroke();
         
+        ctx.beginPath();
+        ctx.moveTo(x, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap);
+        ctx.lineTo(x, margin.top + kLineHeight + gap + volumeHeight + gap + cciHeight + gap + kdjHeight);
+        ctx.stroke();
+        
         // 水平线
         if (isInKLineArea) {
           ctx.beginPath();
@@ -1080,7 +1319,7 @@ const StockView = () => {
         // 绘制提示框
         const tooltipPadding = 5;
         const tooltipWidth = 200;
-        const tooltipHeight = 220; // 增加高度以容纳CCI信息
+        const tooltipHeight = 240; // 增加高度以容纳KDJ信息
         const tooltipX = x > width / 2 ? x - tooltipWidth - 10 : x + 10;
         const tooltipY = y > height / 2 ? y - tooltipHeight - 10 : y + 10;
         
@@ -1117,6 +1356,10 @@ const StockView = () => {
         // 显示CCI信息
         const cciText = dataPoint.cci !== null && dataPoint.cci !== undefined ? `CCI: ${dataPoint.cci.toFixed(2)}` : 'CCI: N/A';
         ctx.fillText(cciText, tooltipX + tooltipPadding, tooltipY + 210);
+        
+        // 显示KDJ信息
+        const kdjText = `K: ${dataPoint.kdj_k !== null && dataPoint.kdj_k !== undefined ? dataPoint.kdj_k.toFixed(2) : 'N/A'}, D: ${dataPoint.kdj_d !== null && dataPoint.kdj_d !== undefined ? dataPoint.kdj_d.toFixed(2) : 'N/A'}, J: ${dataPoint.kdj_j !== null && dataPoint.kdj_j !== undefined ? dataPoint.kdj_j.toFixed(2) : 'N/A'}`;
+        ctx.fillText(kdjText, tooltipX + tooltipPadding, tooltipY + 225);
       }
       
       // 添加标题
@@ -1174,12 +1417,20 @@ const StockView = () => {
           ref={chartContainerRef} 
           style={{ 
             width: '100%', 
-            height: 700,
+            height: 800,
             border: '1px solid #ddd',
             borderRadius: 4
           }}
         />
-        <div style={{ marginTop: 10, fontSize: 12, color: '#666' }}>
+        <div style={{ 
+          marginTop: 10, 
+          fontSize: 12, 
+          color: '#666',
+          padding: '10px',
+          border: '1px dashed #ccc',
+          borderRadius: '4px',
+          backgroundColor: '#f9f9f9'
+        }}>
           <p>操作说明：滚动鼠标可缩放图表，按住鼠标左键可拖拽移动视图</p>
         </div>
       </div>
