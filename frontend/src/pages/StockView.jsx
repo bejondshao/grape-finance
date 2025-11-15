@@ -16,8 +16,6 @@ const StockView = () => {
   const [stockName, setStockName] = useState('');
   const [zoomRange, setZoomRange] = useState({ start: 0, end: 0 }); // 用于缩放的数据范围
   const [hoverInfo, setHoverInfo] = useState(null); // 鼠标悬停信息
-  const [isDragging, setIsDragging] = useState(false); // 是否正在拖拽
-  const [dragStart, setDragStart] = useState({ x: 0, dataIndex: 0 }); // 拖拽起始位置
   const [timeFrame, setTimeFrame] = useState('daily'); // 时间周期: daily, weekly, monthly, quarterly
   const [searchResults, setSearchResults] = useState([]); // 搜索结果
   const [searchLoading, setSearchLoading] = useState(false); // 搜索加载状态
@@ -375,6 +373,8 @@ const StockView = () => {
               setTimeFrame={setTimeFrame}
               maSettings={maSettings}
               setMaSettings={setMaSettings}
+              setZoomRange={setZoomRange}
+              setHoverInfo={setHoverInfo}
             />
           </Spin>
         </Card>

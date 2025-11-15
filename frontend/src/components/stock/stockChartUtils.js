@@ -433,7 +433,7 @@ export const drawStockChart = (canvas, chartContainerRef, stockData, technicalDa
       ma5: '#ff0000',   // 红色
       ma10: '#00ff00',  // 绿色
       ma15: '#0000ff',  // 蓝色
-      ma20: '#ffff00',  // 黄色
+      ma20: '#ffa500',  // 橙色（加深20日均线颜色）
       ma30: '#ff00ff',  // 紫色
       ma60: '#00ffff',  // 青色
       ma120: '#ffa500'  // 橙色
