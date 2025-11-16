@@ -92,3 +92,20 @@ async def update_collection(collection_id: str, updates: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error updating collection: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.delete("/")
+async def clear_all_collections():
+    """Clear all stock collections"""
+    try:
+        mongo_service = MongoDBService()
+        
+        # 删除所有收藏项
+        result = await mongo_service.db.stock_collections.delete_many({})
+        
+        return {
+            "status": "success", 
+            "message": f"Successfully cleared {result.deleted_count} items from collection"
+        }
+    except Exception as e:
+        logger.error(f"Error clearing all collections: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

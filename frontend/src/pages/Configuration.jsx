@@ -78,7 +78,7 @@ const Configuration = () => {
       const response = await configurationService.getConfigs()
       // API 返回的数据结构是 { configs: [...], total: ... }
       // 我们需要提取 configs 字段
-      const configsData = response && response.configs && Array.isArray(response.configs) 
+      const configsData = response && Array.isArray(response.configs) 
         ? response.configs 
         : []
       setConfigs(configsData)

@@ -1002,13 +1002,15 @@ class TechnicalAnalysisService:
             enable_ma_alignment = params.get('enable_ma_alignment', True)
             
             # 获取股票历史数据（包括价格、成交量等）
+            # 增加数据量以确保有足够的数据进行准确计算
             historical_data = await self.mongo_service.get_stock_history(
                 stock_code=stock_code,
-                limit=max(30, max(ma_periods) + 2),  # 获取最近30天的数据
+                limit=max(60, max(ma_periods) + 10),  # 增加数据量
                 sort="desc"
             )
             
             if not historical_data or len(historical_data) < max(ma_periods) + 2:
+                logger.warning(f"股票 {stock_code} 数据不足，无法进行策略评估")
                 return False
             
             # 转换为DataFrame并按日期排序
@@ -1023,13 +1025,13 @@ class TechnicalAnalysisService:
             # 计算平均成交量（用于比较最近的成交量）
             avg_volume = df['volume'].rolling(window=10).mean()
             
-            # 获取技术指标数据（最近30天）
+            # 获取技术指标数据
             tech_collection = f"technical_{stock_code}"
             tech_data_list = await self.mongo_service.find(
                 tech_collection,
                 {'code': stock_code},
                 sort=[('date', -1)],
-                limit=30
+                limit=max(60, max(ma_periods) + 10)  # 增加技术指标数据量
             )
             
             # 创建技术指标字典，以日期为键
@@ -1038,13 +1040,35 @@ class TechnicalAnalysisService:
             # 检查最近30天内的每一天是否满足条件
             matching_dates = []
             
-            # 从倒数第2天开始向前检查（因为需要前一天的数据进行比较）
-            for i in range(len(df) - 2, max(0, len(df) - 31), -1):
+            # 获取股票名称
+            stock_name = ""
+            if historical_data and len(historical_data) > 0:
+                stock_name = historical_data[0].get('code_name', stock_code)
+            
+            # 从倒数第3天开始向前检查（确保有足够的数据进行准确评估）
+            # 不再检查最新的数据，因为可能不完整
+            for i in range(len(df) - 3, max(0, len(df) - 31), -1):
                 current = df.iloc[i]
                 previous = df.iloc[i-1] if i > 0 else None
                 
                 if previous is None:
                     continue
+                
+                # 确保当前和前一个日期都有技术指标数据
+                current_date_str = current['date'].strftime('%Y-%m-%d')
+                previous_date_str = previous['date'].strftime('%Y-%m-%d')
+                
+                if current_date_str not in tech_data_dict or previous_date_str not in tech_data_dict:
+                    logger.debug(f"股票 {stock_code} 缺少 {current_date_str} 或 {previous_date_str} 的技术指标数据")
+                    continue  # 跳过没有完整技术指标数据的日期
+                
+                # 检查CCI值是否有效
+                current_cci = tech_data_dict[current_date_str].get('cci')
+                previous_cci = tech_data_dict[previous_date_str].get('cci')
+                
+                if current_cci is None or previous_cci is None or pd.isna(current_cci) or pd.isna(previous_cci):
+                    logger.debug(f"股票 {stock_code} 在 {current_date_str} 或 {previous_date_str} 的CCI数据无效")
+                    continue  # 跳过CCI数据无效的日期
                 
                 # 条件1: 价格突破（收盘价突破前高或均线）
                 price_breakout = True  # 默认为True，如果禁用检查则视为通过
@@ -1065,17 +1089,8 @@ class TechnicalAnalysisService:
                 # 条件3: CCI指标确认（从阈值以下向上突破）
                 cci_condition = True  # 默认为True，如果禁用检查则视为通过
                 if enable_cci_check:
-                    current_date_str = current['date'].strftime('%Y-%m-%d')
-                    previous_date_str = previous['date'].strftime('%Y-%m-%d')
-                    
-                    if current_date_str in tech_data_dict and previous_date_str in tech_data_dict:
-                        current_cci = tech_data_dict[current_date_str].get('cci', 0)
-                        previous_cci = tech_data_dict[previous_date_str].get('cci', 0)
-                        
-                        # CCI从阈值以下向上突破
-                        cci_condition = (previous_cci <= cci_threshold) and (current_cci > cci_threshold)
-                    else:
-                        cci_condition = False
+                    # CCI从阈值以下向上突破
+                    cci_condition = (previous_cci <= cci_threshold) and (current_cci > cci_threshold)
                 
                 # 条件4: 均线多头排列（可选）
                 ma_alignment = True  # 默认为True，如果禁用检查则视为通过
@@ -1096,10 +1111,10 @@ class TechnicalAnalysisService:
                     matching_dates.append({
                         'date': current['date'].strftime('%Y-%m-%d'),
                         'price': float(current['close']),
-                        'cci': tech_data_dict.get(current['date'].strftime('%Y-%m-%d'), {}).get('cci', None)
+                        'cci': current_cci
                     })
-            
-            logger.info(f"Right side strategy for {stock_code}: found {len(matching_dates)} matching dates")
+            if matching_dates:
+                logger.info(f"Right side strategy for {stock_name} ({stock_code}): found {len(matching_dates)} matching dates: {[md['date'] for md in matching_dates]}")
             
             # 如果有匹配的日期，返回详细信息；否则返回False
             if matching_dates:

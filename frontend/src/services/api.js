@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE_URL = 'http://localhost:8000/api'
+const API_BASE_URL = 'http://127.0.0.1:8000/api'
 
 // 创建axios实例
 const api = axios.create({
@@ -11,7 +11,14 @@ const api = axios.create({
 // 添加响应拦截器来统一处理响应数据
 api.interceptors.response.use(
   (response) => {
-    // 直接返回响应数据，不需要包装
+    // 保持响应结构，但需要处理数组响应
+    // 如果返回的是数组，包装成 {data: array} 格式
+    if (Array.isArray(response.data)) {
+      return {
+        data: response.data
+      };
+    }
+    // 如果返回的是对象，直接返回
     return response.data;
   },
   (error) => {
@@ -77,6 +84,7 @@ export const stockCollectionService = {
   addToCollection: (item) => api.post('/collections', item),
   updateCollection: (id, item) => api.put(`/collections/${id}`, item),
   deleteFromCollection: (id) => api.delete(`/collections/${id}`),
+  clearAllCollections: () => api.delete('/collections'), // 添加清空所有收藏的API
   moveCollection: (id, direction) => api.post(`/collections/${id}/move`, { direction }),
 }
 

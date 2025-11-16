@@ -133,7 +133,7 @@ const TradingRecords = () => {
             const response = await tradingRecordService.getRecords()
             console.log('API Response:', response)
             console.log('Response records:', response.records)
-            setRecords(response.records || [])
+            setRecords(Array.isArray(response.records) ? response.records : [])
         } catch (error) {
             message.error('Failed to fetch trading records')
         } finally {

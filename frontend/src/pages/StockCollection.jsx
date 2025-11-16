@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Table, Button, Input, Select, Space, Tag, message, Modal, Form } from 'antd'
-import { SearchOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import { Table, Button, Input, Select, Space, Tag, message, Modal, Form, Popconfirm } from 'antd'
+import { SearchOutlined, EditOutlined, DeleteOutlined, ClearOutlined } from '@ant-design/icons'
 import { stockCollectionService, tradingStrategyService } from '../services/api'
 import dayjs from 'dayjs'
 
@@ -119,7 +119,12 @@ const StockCollection = () => {
     try {
       const response = await stockCollectionService.getCollections()
       // 确保响应数据是数组
-      const collections = Array.isArray(response.data) ? response.data : []
+      let collections = [];
+      if (response && Array.isArray(response.data)) {
+        collections = response.data;
+      } else if (response && response.data && Array.isArray(response.data.data)) {
+        collections = response.data.data;
+      }
       setCollection(collections)
     } catch (error) {
       console.error('Failed to fetch stock collection:', error)
@@ -183,10 +188,36 @@ const StockCollection = () => {
     form.resetFields()
   }
 
+  const handleClearAll = async () => {
+    try {
+      await stockCollectionService.clearAllCollections()
+      message.success('已成功清空所有收藏')
+      fetchCollection()
+    } catch (error) {
+      console.error('清空收藏失败:', error)
+      message.error('清空收藏失败')
+    }
+  }
+
   return (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1>Stock Collection</h1>
+        <Popconfirm
+          title="清空确认"
+          description="确定要清空所有收藏吗？此操作不可恢复。"
+          onConfirm={handleClearAll}
+          okText="确认"
+          cancelText="取消"
+        >
+          <Button 
+            type="primary" 
+            danger 
+            icon={<ClearOutlined />}
+          >
+            清空收藏
+          </Button>
+        </Popconfirm>
       </div>
 
       <div style={{ marginBottom: 16 }}>

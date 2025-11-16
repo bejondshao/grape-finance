@@ -96,27 +96,58 @@ async def create_right_side_strategy(params: Dict[str, Any] = None):
         # 默认参数
         if params is None:
             params = {}
-            
+        
+        # 处理参数中的布尔值，确保从params中正确获取值
+        parameters = params.get("parameters", {})
+        
+        # 构造策略对象，优先使用用户输入的值
         strategy = {
-            "name": params.get("name", "右侧交易策略"),
-            "description": params.get("description", "基于价格突破、成交量放大和技术指标确认的右侧交易策略"),
+            "name": params.get("name"),
+            "description": params.get("description"),
             "type": "right_side",
             "parameters": {
-                "breakout_threshold": params.get("breakout_threshold", 0),
-                "volume_threshold": params.get("volume_threshold", 1.5),
-                "cci_threshold": params.get("cci_threshold", -100),
-                "ma_periods": params.get("ma_periods", [5, 10, 20]),
-                # 添加开关参数
-                "enable_price_breakout": params.get("enable_price_breakout", True),
-                "enable_volume_check": params.get("enable_volume_check", True),
-                "enable_cci_check": params.get("enable_cci_check", True),
-                "enable_ma_alignment": params.get("enable_ma_alignment", True)
+                "breakout_threshold": parameters.get("breakout_threshold"),
+                "volume_threshold": parameters.get("volume_threshold"),
+                "cci_threshold": parameters.get("cci_threshold"),
+                "ma_periods": parameters.get("ma_periods"),
+                # 正确处理布尔值，确保用户输入的值被正确存储
+                "enable_price_breakout": parameters.get("enable_price_breakout"),
+                "enable_volume_check": parameters.get("enable_volume_check"),
+                "enable_cci_check": parameters.get("enable_cci_check"),
+                "enable_ma_alignment": parameters.get("enable_ma_alignment")
             },
-            "operation": params.get("operation", "关注"),
-            "is_active": True,
+            "operation": params.get("operation"),
+            "is_active": params.get("is_active"),
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow()
         }
+        
+        # 清理参数，但保留用户明确设置的false值
+        strategy["parameters"] = {k: v for k, v in strategy["parameters"].items() if v is not None}
+        
+        # 如果ma_periods是字符串，转换为数组
+        if isinstance(strategy["parameters"].get("ma_periods"), str):
+            ma_periods_str = strategy["parameters"]["ma_periods"]
+            try:
+                ma_periods = [int(p.strip()) for p in ma_periods_str.split(",") if p.strip()]
+                strategy["parameters"]["ma_periods"] = ma_periods
+            except ValueError:
+                # 如果转换失败，使用默认值
+                strategy["parameters"]["ma_periods"] = [5, 10, 20]
+        
+        # 为布尔参数设置默认值（仅在用户未提供时）
+        bool_params = ["enable_price_breakout", "enable_volume_check", "enable_cci_check", "enable_ma_alignment"]
+        for param in bool_params:
+            if param not in strategy["parameters"]:
+                strategy["parameters"][param] = True
+        
+        # 设置必填字段的默认值（仅当用户未提供时）
+        if not strategy.get("name"):
+            strategy["name"] = "右侧交易策略"
+        if not strategy.get("operation"):
+            strategy["operation"] = "关注"
+        if strategy.get("is_active") is None:
+            strategy["is_active"] = True
         
         success = await mongo_service.insert_one('trading_strategies', strategy)
         if success:
@@ -142,7 +173,11 @@ async def evaluate_strategies():
         
         # Get all active strategies
         strategies = await mongo_service.find('trading_strategies', {'is_active': True})
-        stocks = await mongo_service.find('stock_info', {}, {'code': 1})
+        # 获取所有股票和股票名称信息
+        stocks = await mongo_service.find('stock_info', {}, {'code': 1, 'code_name': 1})
+        
+        # 创建股票代码到名称的映射
+        stock_name_map = {stock['code']: stock.get('code_name', stock['code']) for stock in stocks}
         
         results = []
         for strategy in strategies:
@@ -181,21 +216,32 @@ async def evaluate_strategies():
                         meets_conditions = result
                         
                         if meets_conditions:
+                            # 从映射表中获取股票名称
+                            stock_name = stock_name_map.get(stock_code, stock_code)
+                            
+                            # 通用策略使用当前日期作为匹配日期
+                            meet_date = datetime.utcnow()
+                            
+                            # 通用策略不需要特定价格，设为0
+                            price = 0
+                            
                             # Add to stock collections
                             collection_item = {
                                 'code': stock_code,
+                                'name': stock_name,  # 添加股票名称
                                 'strategy_id': str(strategy['_id']),
                                 'strategy_name': strategy['name'],
                                 'operation': strategy['operation'],
-                                'price': 0,  # This should be the current price
+                                'price': price,  # 通用策略不需要特定价格
                                 'share_amount': 0,
-                                'meet_date': datetime.utcnow(),
+                                'meet_date': meet_date,
                                 'added_date': datetime.utcnow()
                             }
                             
                             await mongo_service.insert_one('stock_collections', collection_item)
                             results.append({
                                 'stock_code': stock_code,
+                                'stock_name': stock_name,  # 添加股票名称
                                 'strategy_name': strategy['name'],
                                 'operation': strategy['operation']
                             })
@@ -233,8 +279,11 @@ async def evaluate_right_side_strategies():
                 "results": []
             }
         
-        # 获取所有股票
-        stocks = await mongo_service.find('stock_info', {}, {'code': 1})
+        # 获取所有股票和股票名称信息
+        stocks = await mongo_service.find('stock_info', {}, {'code': 1, 'code_name': 1})
+        
+        # 创建股票代码到名称的映射
+        stock_name_map = {stock['code']: stock.get('code_name', stock['code']) for stock in stocks}
         
         results = []
         for strategy in strategies:
@@ -252,15 +301,20 @@ async def evaluate_right_side_strategies():
                 if evaluation_result and isinstance(evaluation_result, dict) and evaluation_result.get('matched'):
                     matching_dates = evaluation_result.get('matching_dates', [])
                     
+                    # 获取股票名称
+                    stock_info = await mongo_service.find_one('stock_info', {'code': stock_code})
+                    stock_name = stock_info.get('code_name', stock_code) if stock_info else stock_code
+                    
                     # 为每个匹配的日期创建一个记录
                     for match_info in matching_dates:
                         # 添加到股票集合
                         collection_item = {
                             'code': stock_code,
+                            'name': stock_name,  # 添加股票名称
                             'strategy_id': str(strategy['_id']),
                             'strategy_name': strategy['name'],
                             'operation': strategy['operation'],
-                            'price': match_info.get('price', 0),
+                            'price': match_info.get('price'),
                             'share_amount': 0,
                             'meet_date': match_info.get('date'),
                             'added_date': datetime.utcnow()
@@ -270,6 +324,7 @@ async def evaluate_right_side_strategies():
                     
                     results.append({
                         'stock_code': stock_code,
+                        'stock_name': stock_name,  # 添加股票名称
                         'strategy_name': strategy['name'],
                         'operation': strategy['operation'],
                         'matching_dates': matching_dates

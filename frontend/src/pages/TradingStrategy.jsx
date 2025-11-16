@@ -101,9 +101,31 @@ const TradingStrategy = () => {
   const fetchStrategies = async () => {
     setLoading(true)
     try {
+      console.log('开始获取交易策略...')
       const response = await tradingStrategyService.getStrategies()
-      setStrategies(response || [])
+      console.log('API响应:', response)
+      
+      // 直接使用response，因为API返回的就是数组
+      let strategiesData = []
+      
+      if (Array.isArray(response)) {
+        strategiesData = response
+      } else if (response && Array.isArray(response.data)) {
+        strategiesData = response.data
+      }
+      
+      console.log('处理后的策略数据:', strategiesData)
+      
+      const normalized = strategiesData.map(s => ({
+        ...s,
+        _id: s?._id != null ? String(s._id) : s?._id,
+        is_active: s?.is_active === true || s?.is_active === 'true' || s?.is_active === 1
+      }))
+      
+      console.log('标准化后的策略数据:', normalized)
+      setStrategies(normalized)
     } catch (error) {
+      console.error('获取策略失败:', error)
       message.error('Failed to fetch strategies')
     } finally {
       setLoading(false)
@@ -115,9 +137,9 @@ const TradingStrategy = () => {
       const response = await technicalAnalysisService.getConfiguredIndicators()
       console.log('Indicators response:', response);
       // 确保响应数据是数组类型
-      // API 返回的数据结构是 { data: [...] }，我们需要提取 response.data 字段
-      const indicatorsData = response && response.data && Array.isArray(response.data) 
-        ? response.data 
+      // API 返回的数据结构是 { data: [...] }，我们需要提取 response.data.data 字段
+      const indicatorsData = response && response.data && Array.isArray(response.data?.data) 
+        ? response.data.data 
         : []
       setIndicators(indicatorsData)
     } catch (error) {
@@ -157,6 +179,21 @@ const TradingStrategy = () => {
     setEditingStrategy(null)
     form.resetFields()
     rightSideForm.resetFields()
+    // 设置右侧交易策略的默认值
+    setTimeout(() => {
+      rightSideForm.setFieldsValue({
+        is_active: true,
+        breakout_threshold: 0,
+        volume_threshold: 1.5,
+        cci_threshold: -100,
+        ma_periods: '5,10,20',
+        // 所有开关默认开启
+        enable_price_breakout: true,
+        enable_volume_check: true,
+        enable_cci_check: true,
+        enable_ma_alignment: true
+      })
+    }, 100)
     setActiveTab('general')
     setModalVisible(true)
   }
@@ -164,19 +201,28 @@ const TradingStrategy = () => {
   const handleEdit = (strategy) => {
     setEditingStrategy(strategy)
     if (strategy.type === 'right_side') {
+      const params = strategy.parameters || {}
       rightSideForm.setFieldsValue({
         name: strategy.name,
         description: strategy.description,
         operation: strategy.operation,
         is_active: strategy.is_active,
-        breakout_threshold: strategy.parameters?.breakout_threshold || 0,
-        volume_threshold: strategy.parameters?.volume_threshold || 1.5,
-        cci_threshold: strategy.parameters?.cci_threshold || -100,
-        ma_periods: strategy.parameters?.ma_periods ? strategy.parameters.ma_periods.join(',') : '5,10,20'
+        breakout_threshold: params.breakout_threshold ?? 0,
+        volume_threshold: params.volume_threshold ?? 1.5,
+        cci_threshold: params.cci_threshold ?? -100,
+        ma_periods: params.ma_periods ? params.ma_periods.join(',') : '5,10,20',
+        // 为布尔值设置合理默认值，如果数据库中有值则使用数据库值
+        enable_price_breakout: params.enable_price_breakout ?? true,
+        enable_volume_check: params.enable_volume_check ?? true,
+        enable_cci_check: params.enable_cci_check ?? true,
+        enable_ma_alignment: params.enable_ma_alignment ?? true
       })
       setActiveTab('right_side')
     } else {
-      form.setFieldsValue(strategy)
+      form.setFieldsValue({
+        ...strategy,
+        is_active: strategy.is_active
+      })
       setActiveTab('general')
     }
     setModalVisible(true)
@@ -217,7 +263,7 @@ const TradingStrategy = () => {
           maPeriods = values.ma_periods;
         }
         
-        // 确保布尔值正确处理
+        // 确保布尔值正确处理 - 修复：使用实际的表单值，不添加默认值
         const getBooleanValue = (value) => {
           // 如果值已经是布尔类型，直接返回
           if (typeof value === 'boolean') {
@@ -231,26 +277,27 @@ const TradingStrategy = () => {
           if (typeof value === 'number') {
             return value === 1;
           }
-          // 默认返回true（保持开关默认开启的行为）
-          return true;
+          // 如果没有值，返回false（而不是默认true）
+          return value !== undefined ? value : false;
         };
         
-        // 构造右侧交易策略参数
+        // 构造右侧交易策略参数 - 正确处理布尔值，确保用户输入被正确传递
         const strategyParams = {
           name: values.name,
           description: values.description,
           operation: values.operation,
-          is_active: getBooleanValue(values.is_active),
+          is_active: values.is_active,
           type: 'right_side',
           parameters: {
-            breakout_threshold: values.breakout_threshold !== undefined ? values.breakout_threshold : 0,
-            volume_threshold: values.volume_threshold !== undefined ? values.volume_threshold : 1.5,
-            cci_threshold: values.cci_threshold !== undefined ? values.cci_threshold : -100,
+            breakout_threshold: values.breakout_threshold,
+            volume_threshold: values.volume_threshold,
+            cci_threshold: values.cci_threshold,
             ma_periods: maPeriods,
-            enable_price_breakout: getBooleanValue(values.enable_price_breakout),
-            enable_volume_check: getBooleanValue(values.enable_volume_check),
-            enable_cci_check: getBooleanValue(values.enable_cci_check),
-            enable_ma_alignment: getBooleanValue(values.enable_ma_alignment)
+            // 确保布尔值正确传递（undefined/null视为false）
+            enable_price_breakout: values.enable_price_breakout ?? true,
+            enable_volume_check: values.enable_volume_check ?? true,
+            enable_cci_check: values.enable_cci_check ?? true,
+            enable_ma_alignment: values.enable_ma_alignment ?? true
           }
         }
         
@@ -403,7 +450,7 @@ const TradingStrategy = () => {
             </Select>
           </Form.Item>
 
-          <Form.Item name="is_active" label="Active" valuePropName="checked" initialValue={true}>
+          <Form.Item name="is_active" label="Active" valuePropName="checked">
             <Switch checkedChildren="开启" unCheckedChildren="关闭" />
           </Form.Item>
         </Form>
@@ -433,7 +480,7 @@ const TradingStrategy = () => {
               </Select>
             </Form.Item>
 
-            <Form.Item name="is_active" label="是否激活" valuePropName="checked" initialValue={true}>
+            <Form.Item name="is_active" label="是否激活" valuePropName="checked">
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>
           </Card>
@@ -451,7 +498,6 @@ const TradingStrategy = () => {
               name="enable_price_breakout" 
               label="启用价格突破检查" 
               valuePropName="checked"
-              initialValue={true}
             >
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>
@@ -468,7 +514,6 @@ const TradingStrategy = () => {
               name="enable_volume_check" 
               label="启用成交量检查" 
               valuePropName="checked"
-              initialValue={true}
             >
               <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>
