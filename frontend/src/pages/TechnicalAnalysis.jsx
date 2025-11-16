@@ -83,9 +83,9 @@ const TechnicalAnalysis = () => {
       const response = await technicalAnalysisService.getConfiguredIndicators()
       console.log('API Response:', response)
       // 确保响应数据是数组类型
-      // API 返回的数据结构是 { data: { data: [...] } }，我们需要提取 response.data.data 字段
-      const indicatorsData = response && response.data && response.data.data && Array.isArray(response.data.data) 
-        ? response.data.data 
+      // API 返回的数据结构是 { data: [...] }，我们需要提取 response.data 字段
+      const indicatorsData = response && response.data && Array.isArray(response.data) 
+        ? response.data 
         : []
       setIndicators(indicatorsData)
     } catch (error) {

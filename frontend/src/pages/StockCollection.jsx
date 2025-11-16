@@ -44,7 +44,13 @@ const StockCollection = () => {
           'buy': 'green',
           'sell': 'red',
           'hold': 'blue',
-          'watch': 'orange'
+          'watch': 'orange',
+          '建仓': 'green',
+          '加仓': 'lime',
+          '减仓': 'orange',
+          '清仓': 'red',
+          '关注': 'blue',
+          '密切关注': 'purple'
         }
         return <Tag color={colorMap[operation]}>{operation}</Tag>
       },
@@ -74,15 +80,15 @@ const StockCollection = () => {
     },
     {
       title: 'Signal Date',
-      dataIndex: 'signal_date',
-      key: 'signal_date',
+      dataIndex: 'meet_date',
+      key: 'meet_date',
       width: 120,
       render: (date) => date ? dayjs(date).format('YYYY-MM-DD') : '-',
     },
     {
       title: 'Added Date',
-      dataIndex: 'created_at',
-      key: 'created_at',
+      dataIndex: 'added_date',
+      key: 'added_date',
       width: 120,
       render: (date) => date ? dayjs(date).format('YYYY-MM-DD') : '-',
     },
@@ -111,9 +117,12 @@ const StockCollection = () => {
   const fetchCollection = async () => {
     setLoading(true)
     try {
-      const response = await stockCollectionService.getCollection()
-      setCollection(response.data || [])
+      const response = await stockCollectionService.getCollections()
+      // 确保响应数据是数组
+      const collections = Array.isArray(response.data) ? response.data : []
+      setCollection(collections)
     } catch (error) {
+      console.error('Failed to fetch stock collection:', error)
       message.error('Failed to fetch stock collection')
     } finally {
       setLoading(false)
@@ -123,7 +132,9 @@ const StockCollection = () => {
   const fetchStrategies = async () => {
     try {
       const response = await tradingStrategyService.getStrategies()
-      setStrategies(response.data || [])
+      // 确保响应数据是数组
+      const strategies = Array.isArray(response) ? response : []
+      setStrategies(strategies)
     } catch (error) {
       message.error('Failed to fetch strategies')
     }
@@ -142,7 +153,7 @@ const StockCollection = () => {
 
   const handleDelete = async (id) => {
     try {
-      await stockCollectionService.removeFromCollection(id)
+      await stockCollectionService.deleteFromCollection(id)
       message.success('Record deleted successfully')
       fetchCollection()
     } catch (error) {
@@ -189,6 +200,12 @@ const StockCollection = () => {
             <Option value="sell">Sell</Option>
             <Option value="hold">Hold</Option>
             <Option value="watch">Watch</Option>
+            <Option value="建仓">建仓</Option>
+            <Option value="加仓">加仓</Option>
+            <Option value="减仓">减仓</Option>
+            <Option value="清仓">清仓</Option>
+            <Option value="关注">关注</Option>
+            <Option value="密切关注">密切关注</Option>
           </Select>
           <Select placeholder="Filter by strategy" style={{ width: 200 }} allowClear>
             {strategies.map(strategy => (
@@ -221,6 +238,12 @@ const StockCollection = () => {
               <Option value="sell">Sell</Option>
               <Option value="hold">Hold</Option>
               <Option value="watch">Watch</Option>
+              <Option value="建仓">建仓</Option>
+              <Option value="加仓">加仓</Option>
+              <Option value="减仓">减仓</Option>
+              <Option value="清仓">清仓</Option>
+              <Option value="关注">关注</Option>
+              <Option value="密切关注">密切关注</Option>
             </Select>
           </Form.Item>
           <Form.Item name="price" label="Price">

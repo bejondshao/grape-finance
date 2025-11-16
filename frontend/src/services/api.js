@@ -8,6 +8,18 @@ const api = axios.create({
   timeout: 10000,
 })
 
+// 添加响应拦截器来统一处理响应数据
+api.interceptors.response.use(
+  (response) => {
+    // 直接返回响应数据，不需要包装
+    return response.data;
+  },
+  (error) => {
+    console.error('API Error:', error.response || error.message);
+    return Promise.reject(error);
+  }
+);
+
 // 股票相关API
 export const stockService = {
   getStocks: (params) => api.get(`/stocks`, { params }),
@@ -61,11 +73,11 @@ export const configurationService = {
 
 // 自选股相关API
 export const stockCollectionService = {
-  getCollections: () => api.get('/stock-collections'),
-  addToCollection: (item) => api.post('/stock-collections', item),
-  updateCollection: (id, item) => api.put(`/stock-collections/${id}`, item),
-  deleteFromCollection: (id) => api.delete(`/stock-collections/${id}`),
-  moveCollection: (id, direction) => api.post(`/stock-collections/${id}/move`, { direction }),
+  getCollections: () => api.get('/collections'),
+  addToCollection: (item) => api.post('/collections', item),
+  updateCollection: (id, item) => api.put(`/collections/${id}`, item),
+  deleteFromCollection: (id) => api.delete(`/collections/${id}`),
+  moveCollection: (id, direction) => api.post(`/collections/${id}/move`, { direction }),
 }
 
 export default api

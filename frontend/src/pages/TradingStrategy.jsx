@@ -102,7 +102,7 @@ const TradingStrategy = () => {
     setLoading(true)
     try {
       const response = await tradingStrategyService.getStrategies()
-      setStrategies(response.data || [])
+      setStrategies(response || [])
     } catch (error) {
       message.error('Failed to fetch strategies')
     } finally {
@@ -115,9 +115,9 @@ const TradingStrategy = () => {
       const response = await technicalAnalysisService.getConfiguredIndicators()
       console.log('Indicators response:', response);
       // 确保响应数据是数组类型
-      // API 返回的数据结构是 { data: { data: [...] } }，我们需要提取 response.data.data 字段
-      const indicatorsData = response && response.data && response.data.data && Array.isArray(response.data.data) 
-        ? response.data.data 
+      // API 返回的数据结构是 { data: [...] }，我们需要提取 response.data 字段
+      const indicatorsData = response && response.data && Array.isArray(response.data) 
+        ? response.data 
         : []
       setIndicators(indicatorsData)
     } catch (error) {
@@ -207,35 +207,58 @@ const TradingStrategy = () => {
       
       if (activeTab === 'right_side') {
         values = await rightSideForm.validateFields()
+        console.log('Right side form values:', values); // 调试日志
+        
         // 处理均线周期参数
+        let maPeriods = [5, 10, 20];
         if (typeof values.ma_periods === 'string') {
-          values.ma_periods = values.ma_periods.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p))
+          maPeriods = values.ma_periods.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p))
+        } else if (Array.isArray(values.ma_periods)) {
+          maPeriods = values.ma_periods;
         }
+        
+        // 确保布尔值正确处理
+        const getBooleanValue = (value) => {
+          // 如果值已经是布尔类型，直接返回
+          if (typeof value === 'boolean') {
+            return value;
+          }
+          // 如果值是字符串"true"或"false"
+          if (typeof value === 'string') {
+            return value === 'true';
+          }
+          // 如果值是数字
+          if (typeof value === 'number') {
+            return value === 1;
+          }
+          // 默认返回true（保持开关默认开启的行为）
+          return true;
+        };
         
         // 构造右侧交易策略参数
         const strategyParams = {
           name: values.name,
           description: values.description,
           operation: values.operation,
-          is_active: values.is_active,
-          breakout_threshold: values.breakout_threshold,
-          volume_threshold: values.volume_threshold,
-          cci_threshold: values.cci_threshold,
-          ma_periods: values.ma_periods
+          is_active: getBooleanValue(values.is_active),
+          type: 'right_side',
+          parameters: {
+            breakout_threshold: values.breakout_threshold !== undefined ? values.breakout_threshold : 0,
+            volume_threshold: values.volume_threshold !== undefined ? values.volume_threshold : 1.5,
+            cci_threshold: values.cci_threshold !== undefined ? values.cci_threshold : -100,
+            ma_periods: maPeriods,
+            enable_price_breakout: getBooleanValue(values.enable_price_breakout),
+            enable_volume_check: getBooleanValue(values.enable_volume_check),
+            enable_cci_check: getBooleanValue(values.enable_cci_check),
+            enable_ma_alignment: getBooleanValue(values.enable_ma_alignment)
+          }
         }
+        
+        console.log('Strategy params to be sent:', strategyParams); // 调试日志
         
         if (editingStrategy) {
           // 更新策略
-          await tradingStrategyService.updateStrategy(editingStrategy._id, {
-            ...strategyParams,
-            type: 'right_side',
-            parameters: {
-              breakout_threshold: values.breakout_threshold,
-              volume_threshold: values.volume_threshold,
-              cci_threshold: values.cci_threshold,
-              ma_periods: values.ma_periods
-            }
-          })
+          await tradingStrategyService.updateStrategy(editingStrategy._id, strategyParams)
           message.success('右侧交易策略更新成功')
         } else {
           // 创建策略
@@ -260,7 +283,8 @@ const TradingStrategy = () => {
       rightSideForm.resetFields()
       fetchStrategies()
     } catch (error) {
-      message.error('Failed to save strategy')
+      console.error('Failed to save strategy:', error);
+      message.error('Failed to save strategy: ' + (error.response?.data?.detail || error.message || 'Unknown error'))
     }
   }
 
@@ -380,7 +404,7 @@ const TradingStrategy = () => {
           </Form.Item>
 
           <Form.Item name="is_active" label="Active" valuePropName="checked" initialValue={true}>
-            <Switch />
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
           </Form.Item>
         </Form>
       )
@@ -410,7 +434,7 @@ const TradingStrategy = () => {
             </Form.Item>
 
             <Form.Item name="is_active" label="是否激活" valuePropName="checked" initialValue={true}>
-              <Switch />
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>
           </Card>
 
@@ -424,11 +448,29 @@ const TradingStrategy = () => {
             </Form.Item>
 
             <Form.Item 
+              name="enable_price_breakout" 
+              label="启用价格突破检查" 
+              valuePropName="checked"
+              initialValue={true}
+            >
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            </Form.Item>
+
+            <Form.Item 
               name="volume_threshold" 
               label="成交量阈值" 
               extra="例如1.5表示成交量需达到平均值的1.5倍"
             >
               <InputNumber placeholder="1.5" min={0.1} step={0.1} style={{ width: '100%' }} />
+            </Form.Item>
+
+            <Form.Item 
+              name="enable_volume_check" 
+              label="启用成交量检查" 
+              valuePropName="checked"
+              initialValue={true}
+            >
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>
 
             <Form.Item 
@@ -440,11 +482,29 @@ const TradingStrategy = () => {
             </Form.Item>
 
             <Form.Item 
+              name="enable_cci_check" 
+              label="启用CCI指标检查" 
+              valuePropName="checked"
+              initialValue={true}
+            >
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            </Form.Item>
+
+            <Form.Item 
               name="ma_periods" 
               label="均线周期" 
               extra="多个周期用逗号分隔，如：5,10,20"
             >
               <Input placeholder="5,10,20" />
+            </Form.Item>
+
+            <Form.Item 
+              name="enable_ma_alignment" 
+              label="启用均线排列检查" 
+              valuePropName="checked"
+              initialValue={true}
+            >
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             </Form.Item>
           </Card>
           

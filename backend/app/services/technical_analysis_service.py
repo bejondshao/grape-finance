@@ -957,7 +957,7 @@ class TechnicalAnalysisService:
             logger.error(f"Error evaluating trading strategy for {stock_code}: {str(e)}")
             return False
 
-    async def evaluate_right_side_trading_strategy(self, stock_code: str, params: Dict[str, Any] = None) -> bool:
+    async def evaluate_right_side_trading_strategy(self, stock_code: str, params: Dict[str, Any] = None) -> bool | Dict[str, Any]:
         """Evaluate if a stock meets right side trading strategy conditions
         
         右侧交易策略是一种趋势跟踪策略，核心思想是在股价确认上涨趋势后买入，
@@ -976,9 +976,14 @@ class TechnicalAnalysisService:
                 - volume_threshold: 成交量放大倍数，默认为1.5
                 - cci_threshold: CCI阈值，默认为-100（CCI从-100以下向上突破）
                 - ma_periods: 均线周期列表，默认为[5, 10, 20]
+                - enable_price_breakout: 是否启用价格突破检查
+                - enable_volume_check: 是否启用成交量检查
+                - enable_cci_check: 是否启用CCI指标检查
+                - enable_ma_alignment: 是否启用均线排列检查
                 
         Returns:
             bool: 是否满足右侧交易策略条件
+            Dict: 如果满足条件，返回包含匹配日期的详细信息
         """
         try:
             if params is None:
@@ -990,10 +995,16 @@ class TechnicalAnalysisService:
             cci_threshold = params.get('cci_threshold', -100)         # CCI阈值
             ma_periods = params.get('ma_periods', [5, 10, 20])        # 均线周期
             
+            # 获取开关参数
+            enable_price_breakout = params.get('enable_price_breakout', True)
+            enable_volume_check = params.get('enable_volume_check', True)
+            enable_cci_check = params.get('enable_cci_check', True)
+            enable_ma_alignment = params.get('enable_ma_alignment', True)
+            
             # 获取股票历史数据（包括价格、成交量等）
             historical_data = await self.mongo_service.get_stock_history(
                 stock_code=stock_code,
-                limit=30,  # 获取最近30天的数据
+                limit=max(30, max(ma_periods) + 2),  # 获取最近30天的数据
                 sort="desc"
             )
             
@@ -1012,60 +1023,93 @@ class TechnicalAnalysisService:
             # 计算平均成交量（用于比较最近的成交量）
             avg_volume = df['volume'].rolling(window=10).mean()
             
-            # 获取最新数据点
-            latest = df.iloc[-1]
-            previous = df.iloc[-2]
-            
-            # 条件1: 价格突破（收盘价突破前高或均线）
-            price_breakout = False
-            if breakout_threshold == 0:
-                # 突破前高
-                price_breakout = latest['close'] > df['high'].iloc[-6:-1].max() if len(df) >= 6 else False
-            else:
-                # 突破指定价格
-                price_breakout = latest['close'] > breakout_threshold
-            
-            # 条件2: 成交量放大
-            volume_amplified = latest['volume'] > (avg_volume.iloc[-1] * volume_threshold)
-            
-            # 条件3: CCI指标确认（从阈值以下向上突破）
-            # 获取技术指标数据
+            # 获取技术指标数据（最近30天）
             tech_collection = f"technical_{stock_code}"
-            tech_data = await self.mongo_service.find(
+            tech_data_list = await self.mongo_service.find(
                 tech_collection,
                 {'code': stock_code},
                 sort=[('date', -1)],
-                limit=2
+                limit=30
             )
             
-            cci_condition = False
-            if len(tech_data) >= 2:
-                current_cci = tech_data[0].get('cci', 0)
-                previous_cci = tech_data[1].get('cci', 0)
+            # 创建技术指标字典，以日期为键
+            tech_data_dict = {item['date']: item for item in tech_data_list}
+            
+            # 检查最近30天内的每一天是否满足条件
+            matching_dates = []
+            
+            # 从倒数第2天开始向前检查（因为需要前一天的数据进行比较）
+            for i in range(len(df) - 2, max(0, len(df) - 31), -1):
+                current = df.iloc[i]
+                previous = df.iloc[i-1] if i > 0 else None
                 
-                # CCI从阈值以下向上突破
-                cci_condition = (previous_cci <= cci_threshold) and (current_cci > cci_threshold)
+                if previous is None:
+                    continue
+                
+                # 条件1: 价格突破（收盘价突破前高或均线）
+                price_breakout = True  # 默认为True，如果禁用检查则视为通过
+                if enable_price_breakout:
+                    if breakout_threshold == 0:
+                        # 突破前高（检查最近5天内的最高价）
+                        price_breakout = current['close'] > df['high'].iloc[max(0, i-5):i].max() if i >= 1 else False
+                    else:
+                        # 突破指定价格
+                        price_breakout = current['close'] > breakout_threshold
+                
+                # 条件2: 成交量放大
+                volume_amplified = True  # 默认为True，如果禁用检查则视为通过
+                if enable_volume_check:
+                    avg_vol = avg_volume.iloc[i] if not pd.isna(avg_volume.iloc[i]) else avg_volume.dropna().iloc[-1]
+                    volume_amplified = current['volume'] > (avg_vol * volume_threshold)
+                
+                # 条件3: CCI指标确认（从阈值以下向上突破）
+                cci_condition = True  # 默认为True，如果禁用检查则视为通过
+                if enable_cci_check:
+                    current_date_str = current['date'].strftime('%Y-%m-%d')
+                    previous_date_str = previous['date'].strftime('%Y-%m-%d')
+                    
+                    if current_date_str in tech_data_dict and previous_date_str in tech_data_dict:
+                        current_cci = tech_data_dict[current_date_str].get('cci', 0)
+                        previous_cci = tech_data_dict[previous_date_str].get('cci', 0)
+                        
+                        # CCI从阈值以下向上突破
+                        cci_condition = (previous_cci <= cci_threshold) and (current_cci > cci_threshold)
+                    else:
+                        cci_condition = False
+                
+                # 条件4: 均线多头排列（可选）
+                ma_alignment = True  # 默认为True，如果禁用检查则视为通过
+                if enable_ma_alignment:
+                    if len(ma_periods) >= 2:
+                        # 短期均线 > 长期均线
+                        ma_values = [current[f'ma{period}'] for period in ma_periods if f'ma{period}' in current and not pd.isna(current[f'ma{period}'])]
+                        if len(ma_values) >= 2:
+                            # 检查是否为递减序列（从短期到长期）
+                            ma_alignment = all(ma_values[i] >= ma_values[i+1] for i in range(len(ma_values)-1))
+                    else:
+                        ma_alignment = True  # 如果均线周期少于2个，则视为通过检查
+                
+                # 综合判断
+                right_side_condition = price_breakout and volume_amplified and cci_condition and ma_alignment
+                
+                if right_side_condition:
+                    matching_dates.append({
+                        'date': current['date'].strftime('%Y-%m-%d'),
+                        'price': float(current['close']),
+                        'cci': tech_data_dict.get(current['date'].strftime('%Y-%m-%d'), {}).get('cci', None)
+                    })
             
-            # 条件4: 均线多头排列（可选）
-            ma_alignment = True
-            if len(ma_periods) >= 2:
-                # 短期均线 > 长期均线
-                ma_values = [latest[f'ma{period}'] for period in ma_periods if f'ma{period}' in latest and not pd.isna(latest[f'ma{period}'])]
-                if len(ma_values) >= 2:
-                    # 检查是否为递减序列（从短期到长期）
-                    ma_alignment = all(ma_values[i] >= ma_values[i+1] for i in range(len(ma_values)-1))
+            logger.info(f"Right side strategy for {stock_code}: found {len(matching_dates)} matching dates")
             
-            # 综合判断
-            right_side_condition = price_breakout and volume_amplified and cci_condition and ma_alignment
-            
-            logger.info(f"Right side strategy for {stock_code}: "
-                       f"price_breakout={price_breakout}, "
-                       f"volume_amplified={volume_amplified}, "
-                       f"cci_condition={cci_condition}, "
-                       f"ma_alignment={ma_alignment}, "
-                       f"result={right_side_condition}")
-            
-            return right_side_condition
+            # 如果有匹配的日期，返回详细信息；否则返回False
+            if matching_dates:
+                return {
+                    'matched': True,
+                    'matching_dates': matching_dates,
+                    'latest_match': matching_dates[0] if matching_dates else None
+                }
+            else:
+                return False
             
         except Exception as e:
             logger.error(f"Error evaluating right side trading strategy for {stock_code}: {str(e)}")

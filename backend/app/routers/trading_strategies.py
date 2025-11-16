@@ -1,7 +1,13 @@
+import sys
+sys.path.insert(0, 'C:/Users/bejon/AppData/Local/Programs/Python/Python312/Lib/site-packages')
+
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict, Any
 import logging
 from datetime import datetime
+import asyncio
+from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 
 from app.services.mongodb_service import MongoDBService
 from app.services.technical_analysis_service import TechnicalAnalysisService
@@ -16,6 +22,10 @@ async def get_trading_strategies():
     try:
         mongo_service = MongoDBService()
         strategies = await mongo_service.find('trading_strategies', {})
+        # Convert ObjectId to string for JSON serialization
+        for strategy in strategies:
+            if '_id' in strategy and isinstance(strategy['_id'], ObjectId):
+                strategy['_id'] = str(strategy['_id'])
         return strategies
     except Exception as e:
         logger.error(f"Error getting trading strategies: {str(e)}")
@@ -30,9 +40,15 @@ async def create_trading_strategy(strategy: Dict[str, Any]):
         
         success = await mongo_service.insert_one('trading_strategies', strategy)
         if success:
-            return {"status": "success", "message": "Strategy created"}
+            # Convert ObjectId to string for JSON serialization
+            if '_id' in strategy and isinstance(strategy['_id'], ObjectId):
+                strategy['_id'] = str(strategy['_id'])
+            return {"status": "success", "message": "Strategy created", "strategy": strategy}
         else:
             raise HTTPException(status_code=500, detail="Failed to create strategy")
+    except DuplicateKeyError as e:
+        logger.error(f"Duplicate key error creating trading strategy: {str(e)}")
+        raise HTTPException(status_code=400, detail="Strategy with this name already exists")
     except Exception as e:
         logger.error(f"Error creating trading strategy: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -89,7 +105,12 @@ async def create_right_side_strategy(params: Dict[str, Any] = None):
                 "breakout_threshold": params.get("breakout_threshold", 0),
                 "volume_threshold": params.get("volume_threshold", 1.5),
                 "cci_threshold": params.get("cci_threshold", -100),
-                "ma_periods": params.get("ma_periods", [5, 10, 20])
+                "ma_periods": params.get("ma_periods", [5, 10, 20]),
+                # 添加开关参数
+                "enable_price_breakout": params.get("enable_price_breakout", True),
+                "enable_volume_check": params.get("enable_volume_check", True),
+                "enable_cci_check": params.get("enable_cci_check", True),
+                "enable_ma_alignment": params.get("enable_ma_alignment", True)
             },
             "operation": params.get("operation", "关注"),
             "is_active": True,
@@ -99,9 +120,15 @@ async def create_right_side_strategy(params: Dict[str, Any] = None):
         
         success = await mongo_service.insert_one('trading_strategies', strategy)
         if success:
+            # Convert ObjectId to string for JSON serialization
+            if '_id' in strategy and isinstance(strategy['_id'], ObjectId):
+                strategy['_id'] = str(strategy['_id'])
             return {"status": "success", "message": "右侧交易策略创建成功", "strategy": strategy}
         else:
             raise HTTPException(status_code=500, detail="Failed to create strategy")
+    except DuplicateKeyError as e:
+        logger.error(f"Duplicate key error creating right side trading strategy: {str(e)}")
+        raise HTTPException(status_code=400, detail="策略名称已存在")
     except Exception as e:
         logger.error(f"Error creating right side trading strategy: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -119,39 +146,62 @@ async def evaluate_strategies():
         
         results = []
         for strategy in strategies:
-            for stock in stocks:
-                stock_code = stock['code']
-                meets_conditions = False
+            # 分批处理股票，每批20个并发执行
+            batch_size = 20
+            for i in range(0, len(stocks), batch_size):
+                batch = stocks[i:i+batch_size]
                 
-                # 根据策略类型调用不同的评估方法
-                if strategy.get('type') == 'right_side':
-                    # 右侧交易策略
-                    meets_conditions = await technical_service.evaluate_right_side_trading_strategy(
-                        stock_code, strategy.get('parameters', {})
-                    )
-                else:
-                    # 通用策略评估
-                    meets_conditions = await technical_service.evaluate_trading_strategy(stock_code, strategy)
-                
-                if meets_conditions:
-                    # Add to stock collections
-                    collection_item = {
-                        'code': stock_code,
-                        'strategy_id': str(strategy['_id']),
-                        'strategy_name': strategy['name'],
-                        'operation': strategy['operation'],
-                        'price': 0,  # This should be the current price
-                        'share_amount': 0,
-                        'meet_date': datetime.utcnow(),
-                        'added_date': datetime.utcnow()
-                    }
+                # 为每只股票创建评估任务
+                tasks = []
+                for stock in batch:
+                    stock_code = stock['code']
                     
-                    await mongo_service.insert_one('stock_collections', collection_item)
-                    results.append({
-                        'stock_code': stock_code,
-                        'strategy_name': strategy['name'],
-                        'operation': strategy['operation']
-                    })
+                    # 根据策略类型调用不同的评估方法
+                    if strategy.get('type') == 'right_side':
+                        # 右侧交易策略
+                        task = technical_service.evaluate_right_side_trading_strategy(
+                            stock_code, strategy.get('parameters', {})
+                        )
+                    else:
+                        # 通用策略评估
+                        task = technical_service.evaluate_trading_strategy(stock_code, strategy)
+                    
+                    tasks.append((stock_code, task))
+                
+                # 并发执行当前批次的任务
+                batch_results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
+                
+                # 处理当前批次的结果
+                for (stock_code, _), result in zip(tasks, batch_results):
+                    try:
+                        if isinstance(result, Exception):
+                            logger.error(f"Error evaluating strategy for {stock_code}: {str(result)}")
+                            continue
+                            
+                        meets_conditions = result
+                        
+                        if meets_conditions:
+                            # Add to stock collections
+                            collection_item = {
+                                'code': stock_code,
+                                'strategy_id': str(strategy['_id']),
+                                'strategy_name': strategy['name'],
+                                'operation': strategy['operation'],
+                                'price': 0,  # This should be the current price
+                                'share_amount': 0,
+                                'meet_date': datetime.utcnow(),
+                                'added_date': datetime.utcnow()
+                            }
+                            
+                            await mongo_service.insert_one('stock_collections', collection_item)
+                            results.append({
+                                'stock_code': stock_code,
+                                'strategy_name': strategy['name'],
+                                'operation': strategy['operation']
+                            })
+                    except Exception as e:
+                        logger.error(f"Error processing result for {stock_code}: {str(e)}")
+                        continue
         
         return {
             "status": "success",
@@ -194,28 +244,35 @@ async def evaluate_right_side_strategies():
                 stock_code = stock['code']
                 
                 # 评估右侧交易策略
-                meets_conditions = await technical_service.evaluate_right_side_trading_strategy(
+                evaluation_result = await technical_service.evaluate_right_side_trading_strategy(
                     stock_code, strategy_params
                 )
                 
-                if meets_conditions:
-                    # 添加到股票集合
-                    collection_item = {
-                        'code': stock_code,
-                        'strategy_id': str(strategy['_id']),
-                        'strategy_name': strategy['name'],
-                        'operation': strategy['operation'],
-                        'price': 0,
-                        'share_amount': 0,
-                        'meet_date': datetime.utcnow(),
-                        'added_date': datetime.utcnow()
-                    }
+                # 如果满足条件，添加到股票集合
+                if evaluation_result and isinstance(evaluation_result, dict) and evaluation_result.get('matched'):
+                    matching_dates = evaluation_result.get('matching_dates', [])
                     
-                    await mongo_service.insert_one('stock_collections', collection_item)
+                    # 为每个匹配的日期创建一个记录
+                    for match_info in matching_dates:
+                        # 添加到股票集合
+                        collection_item = {
+                            'code': stock_code,
+                            'strategy_id': str(strategy['_id']),
+                            'strategy_name': strategy['name'],
+                            'operation': strategy['operation'],
+                            'price': match_info.get('price', 0),
+                            'share_amount': 0,
+                            'meet_date': match_info.get('date'),
+                            'added_date': datetime.utcnow()
+                        }
+                        
+                        await mongo_service.insert_one('stock_collections', collection_item)
+                    
                     results.append({
                         'stock_code': stock_code,
                         'strategy_name': strategy['name'],
-                        'operation': strategy['operation']
+                        'operation': strategy['operation'],
+                        'matching_dates': matching_dates
                     })
         
         return {

@@ -74,11 +74,12 @@ const Configuration = () => {
   const fetchConfigs = async () => {
     setLoading(true)
     try {
+      // 现在API拦截器会自动处理响应数据，直接使用返回结果
       const response = await configurationService.getConfigs()
-      // API 返回的数据结构是 { data: { configs: [...], total: ... } }
+      // API 返回的数据结构是 { configs: [...], total: ... }
       // 我们需要提取 configs 字段
-      const configsData = response && response.data && response.data.configs && Array.isArray(response.data.configs) 
-        ? response.data.configs 
+      const configsData = response && response.configs && Array.isArray(response.configs) 
+        ? response.configs 
         : []
       setConfigs(configsData)
     } catch (error) {

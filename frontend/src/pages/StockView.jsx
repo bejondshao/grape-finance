@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+﻿﻿import React, { useState, useEffect, useRef } from 'react';
 import { Form, Button, Card, Spin } from 'antd';
 import { stockService } from '../services/api';
 import StockSearch from '../components/stock/StockSearch';
@@ -45,10 +45,9 @@ const StockView = () => {
 
       console.log('Integrated data response:', response); // 调试日志
 
-      // 检查响应结构并正确提取数据
-      const responseData = response.data || response;
-      const stockData = Array.isArray(responseData) ? responseData : (responseData.data || []);
-      const stockName = (responseData.name || responseData.stockName || '');
+      // 现在API服务已经处理了响应数据，直接使用即可
+      let stockData = Array.isArray(response.data) ? response.data : [];
+      const stockName = response.name || '';
 
       const formattedHistoryData = stockData.map(item => {
         const open = parseFloat(item.open);
@@ -116,9 +115,7 @@ const StockView = () => {
       try {
         const response = await stockService.getStocks({ code: stockCode });
         console.log('Stock query response:', response); // 调试日志
-        // 检查响应结构并正确提取数据
-        const responseData = response.data || response;
-        const stocks = Array.isArray(responseData) ? responseData : (responseData.stocks || []);
+        let stocks = Array.isArray(response.stocks) ? response.stocks : [];
         
         // 如果找到了匹配的股票，使用第一个结果
         if (stocks.length > 0) {
@@ -135,7 +132,7 @@ const StockView = () => {
             // 获取股票详细信息
             const stockInfoResponse = await loadStockInfo(selectedStock.code);
             console.log('Stock info response:', stockInfoResponse); // 调试日志
-            setStockInfo(stockInfoResponse.data);
+            setStockInfo(stockInfoResponse);
             
             // 从整合数据响应中获取股票名称
             const stockName = response.name || '';
@@ -197,7 +194,7 @@ const StockView = () => {
       // 获取股票详细信息
       const stockInfoResponse = await loadStockInfo(stockCode);
       console.log('Stock info response:', stockInfoResponse); // 调试日志
-      setStockInfo(stockInfoResponse.data);
+      setStockInfo(stockInfoResponse);
       
       // 从整合数据响应中获取股票名称
       const stockName = response.name || '';
@@ -258,9 +255,7 @@ const StockView = () => {
       try {
         const response = await stockService.getStocks({ code: value });
         console.log('Stock search response:', response); // 调试日志
-        // 检查响应结构并正确提取数据
-        const responseData = response.data || response;
-        const stocks = Array.isArray(responseData) ? responseData : (responseData.stocks || []);
+        let stocks = Array.isArray(response.stocks) ? response.stocks : [];
         setSearchResults(stocks);
         
         // 如果只有一个匹配结果，自动选择它
@@ -285,9 +280,7 @@ const StockView = () => {
       try {
         const response = await stockService.getStocks({ name: value });
         console.log('Stock search by name response:', response); // 调试日志
-        // 检查响应结构并正确提取数据
-        const responseData = response.data || response;
-        const stocks = Array.isArray(responseData) ? responseData : (responseData.stocks || []);
+        let stocks = Array.isArray(response.stocks) ? response.stocks : [];
         setSearchResults(stocks);
         
         // 如果只有一个匹配结果，自动选择它

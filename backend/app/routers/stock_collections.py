@@ -1,6 +1,10 @@
+import sys
+sys.path.insert(0, 'C:/Users/bejon/AppData/Local/Programs/Python/Python312/Lib/site-packages')
+
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Dict, Any, Optional
 import logging
+from bson import ObjectId
 
 from app.services.mongodb_service import MongoDBService
 
@@ -32,7 +36,8 @@ async def get_stock_collections(
         )
         
         return {
-            "collections": collections,
+            "status": "success",
+            "data": collections,
             "total": len(collections)
         }
     except Exception as e:

@@ -1,0 +1,28 @@
+# 右侧交易策略依赖包
+# 运行 pip install -r requirements.txt 安装所有依赖
+
+# 核心数据处理
+pandas>=1.5.0
+numpy>=1.21.0
+
+# 技术指标计算
+talib>=0.4.0
+
+# 数据可视化
+matplotlib>=3.5.0
+
+# 回测和优化
+scipy>=1.9.0
+scikit-learn>=1.0.0
+
+# 数据处理工具
+python-dateutil>=2.8.0
+pytz>=2022.0
+
+# 可选：用于数据获取
+yfinance>=0.1.0
+tushare>=1.2.0
+
+# 开发工具
+jupyter>=1.0.0
+ipython>=8.0.0
