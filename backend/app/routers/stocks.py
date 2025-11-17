@@ -235,14 +235,18 @@ async def get_stock_integrated_data(
         )
 
         # 获取技术指标数据
-        technical_collection_name = f"technical_{code}"
+        technical_collection_name = mongo_service.get_technical_collection_name(code)
         technical_query = {'code': code}
         if start_date or end_date:
             technical_query['date'] = {}
             if start_date:
-                technical_query['date']['$gte'] = start_date
+                # Convert start_date string to datetime object
+                technical_query['date']['$gte'] = datetime.strptime(start_date, "%Y-%m-%d")
             if end_date:
-                technical_query['date']['$lte'] = end_date
+                # Convert end_date string to datetime object and include the entire day
+                end_date_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                end_date_dt = end_date_dt.replace(hour=23, minute=59, second=59)
+                technical_query['date']['$lte'] = end_date_dt
 
         technical_data = await mongo_service.find(
             technical_collection_name,

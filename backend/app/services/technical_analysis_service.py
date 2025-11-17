@@ -909,7 +909,7 @@ class TechnicalAnalysisService:
         """Evaluate if a stock meets trading strategy conditions"""
         try:
             # Get latest technical data
-            collection_name = f"technical_{stock_code}"
+            collection_name = self.mongo_service.get_technical_collection_name(stock_code)
             tech_data = await self.mongo_service.find(
                 collection_name,
                 {'code': stock_code},
@@ -925,6 +925,13 @@ class TechnicalAnalysisService:
             
             # Check strategy conditions
             conditions_met = True
+            matching_dates = []
+            
+            # Check if any conditions are specified
+            if not strategy.get('conditions'):
+                # If no conditions specified, return False rather than True
+                return False
+            
             for condition in strategy.get('conditions', []):
                 indicator = condition.get('indicator')
                 operator = condition.get('operator')
@@ -936,22 +943,39 @@ class TechnicalAnalysisService:
                 else:
                     data_point = previous_data
                 
+                condition_met = False
                 if indicator == 'CCI':
                     cci_value = data_point.get('cci', 0)
-                    if operator == '>' and not (cci_value > value):
-                        conditions_met = False
-                    elif operator == '>=' and not (cci_value >= value):
-                        conditions_met = False
-                    elif operator == '<' and not (cci_value < value):
-                        conditions_met = False
-                    elif operator == '<=' and not (cci_value <= value):
-                        conditions_met = False
-                    elif operator == '==' and not (cci_value == value):
-                        conditions_met = False
-                    elif operator == '!=' and not (cci_value != value):
-                        conditions_met = False
+                    if operator == '>' and cci_value > value:
+                        condition_met = True
+                    elif operator == '>=' and cci_value >= value:
+                        condition_met = True
+                    elif operator == '<' and cci_value < value:
+                        condition_met = True
+                    elif operator == '<=' and cci_value <= value:
+                        condition_met = True
+                    elif operator == '==' and cci_value == value:
+                        condition_met = True
+                    elif operator == '!=' and cci_value != value:
+                        condition_met = True
+                
+                if condition_met:
+                    matching_dates.append({
+                        'date': data_point.get('date'),
+                        'value': data_point.get(indicator.lower()) if indicator.lower() in data_point else None
+                    })
+                else:
+                    conditions_met = False
             
-            return conditions_met
+            # If all conditions are met, return detailed information
+            if conditions_met and matching_dates:
+                return {
+                    'matched': True,
+                    'matching_dates': matching_dates
+                }
+            else:
+                logger.info(f"Stock {stock_code} does not meet {trading_strategy} strategy conditions")
+                return False
             
         except Exception as e:
             logger.error(f"Error evaluating trading strategy for {stock_code}: {str(e)}")
@@ -994,6 +1018,7 @@ class TechnicalAnalysisService:
             volume_threshold = params.get('volume_threshold', 1.5)    # 成交量放大倍数
             cci_threshold = params.get('cci_threshold', -100)         # CCI阈值
             ma_periods = params.get('ma_periods', [5, 10, 20])        # 均线周期
+            days_range = params.get('days_range', 30)                 # 执行范围（天数）
             
             # 获取开关参数
             enable_price_breakout = params.get('enable_price_breakout', True)
@@ -1005,7 +1030,7 @@ class TechnicalAnalysisService:
             # 增加数据量以确保有足够的数据进行准确计算
             historical_data = await self.mongo_service.get_stock_history(
                 stock_code=stock_code,
-                limit=max(60, max(ma_periods) + 10),  # 增加数据量
+                limit=max(days_range, 60, max(ma_periods) + 10),  # 使用days_range参数
                 sort="desc"
             )
             
@@ -1031,13 +1056,13 @@ class TechnicalAnalysisService:
                 tech_collection,
                 {'code': stock_code},
                 sort=[('date', -1)],
-                limit=max(60, max(ma_periods) + 10)  # 增加技术指标数据量
+                limit=max(days_range, 60, max(ma_periods) + 10)  # 使用days_range参数
             )
             
             # 创建技术指标字典，以日期为键
             tech_data_dict = {item['date']: item for item in tech_data_list}
             
-            # 检查最近30天内的每一天是否满足条件
+            # 检查最近N天内的每一天是否满足条件（N为days_range）
             matching_dates = []
             
             # 获取股票名称
@@ -1047,7 +1072,7 @@ class TechnicalAnalysisService:
             
             # 从倒数第3天开始向前检查（确保有足够的数据进行准确评估）
             # 不再检查最新的数据，因为可能不完整
-            for i in range(len(df) - 3, max(0, len(df) - 31), -1):
+            for i in range(len(df) - 3, max(0, len(df) - days_range - 1), -1):
                 current = df.iloc[i]
                 previous = df.iloc[i-1] if i > 0 else None
                 

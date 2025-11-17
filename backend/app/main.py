@@ -1,21 +1,52 @@
+import os
+import logging
+import sys
+import datetime
+from logging.handlers import TimedRotatingFileHandler
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-import logging
 from app.services.data_service import DataService
 from app.services.mongodb_service import MongoDBService
 from app.routers import stocks, technical_analysis, trading_strategies, config, stock_collections, trading_records
 from app.config.settings import Settings
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# 在任何其他导入之前配置日志系统
+# Create logs directory if it doesn't exist
+log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+os.makedirs(log_dir, exist_ok=True)
+
+# 配置日志格式
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Console handler - 使用UTF-8编码
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+
+# 创建带日期的文件名
+current_date = datetime.datetime.now().strftime('%Y-%m-%d')
+log_filename = os.path.join(log_dir, f"grape_finance.{current_date}.log")
+
+# File handler with UTF-8 encoding
+file_handler = logging.FileHandler(log_filename, encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(formatter)
+
+# Configure root logger
+logging.basicConfig(level=logging.INFO, handlers=[console_handler, file_handler])
+
+# 获取logger
 logger = logging.getLogger(__name__)
+logger.info("日志系统初始化完成")
+
+# 确保所有子模块使用相同的日志配置
+logging.getLogger('app').setLevel(logging.INFO)
+logging.getLogger('app.strategies').setLevel(logging.INFO)
+logging.getLogger('app.routers').setLevel(logging.INFO)
+logging.getLogger('app.services').setLevel(logging.INFO)
 
 settings = Settings()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

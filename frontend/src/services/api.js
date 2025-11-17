@@ -5,7 +5,7 @@ const API_BASE_URL = 'http://127.0.0.1:8000/api'
 // 创建axios实例
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 30000, // 将超时时间从10秒增加到30秒
 })
 
 // 添加响应拦截器来统一处理响应数据
@@ -23,6 +23,11 @@ api.interceptors.response.use(
   },
   (error) => {
     console.error('API Error:', error.response || error.message);
+    // 确保错误对象包含响应数据
+    if (error.response && error.response.data) {
+      // 将响应数据附加到错误对象上，以便组件可以访问
+      error.errorMessage = error.response.data.detail || error.response.data.message || 'Unknown error';
+    }
     return Promise.reject(error);
   }
 );
@@ -65,10 +70,15 @@ export const tradingStrategyService = {
   getStrategies: () => api.get('/trading-strategies/strategies'),
   createStrategy: (strategy) => api.post('/trading-strategies/strategies', strategy),
   createRightSideStrategy: (params) => api.post('/trading-strategies/strategies/right_side', params),
+  createStrongKStrategy: (params) => api.post('/trading-strategies/strategies/strong_k', params),
   updateStrategy: (id, strategy) => api.put(`/trading-strategies/strategies/${id}`, strategy),
   deleteStrategy: (id) => api.delete(`/trading-strategies/strategies/${id}`),
   executeStrategy: (id) => api.post(`/trading-strategies/evaluate`),
   executeRightSideStrategy: () => api.post(`/trading-strategies/evaluate/right_side`),
+  manualExecuteStrategy: (params) => api.post('/trading-strategies/execute/manual', params),
+  stopStrategyExecution: () => api.post('/trading-strategies/execute/stop'), // 添加停止策略执行的API
+  filterStocks: (params) => api.get('/trading-strategies/stocks/filter', { params }),
+  getExecutionStatus: (executionId) => api.get(`/trading-strategies/execute/status/${executionId}`), // 添加获取执行状态的API
 }
 
 // 系统配置相关API
