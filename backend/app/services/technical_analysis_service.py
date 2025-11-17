@@ -414,6 +414,7 @@ class TechnicalAnalysisService:
             latest_tech_date_str = await self.mongo_service.get_latest_technical_date(stock_code)
             latest_tech_date = datetime.strptime(latest_tech_date_str, "%Y-%m-%d %H:%M:%S") if latest_tech_date_str else datetime.min
             
+            # 修改这里的逻辑，确保包含最新的数据点
             for i, (idx, row) in enumerate(df_sorted.iterrows()):
                 if not pd.isna(cci_values.iloc[i]):
                     # Ensure current_date is a datetime object for comparison
@@ -426,8 +427,8 @@ class TechnicalAnalysisService:
                     else:
                         current_date = row['date']
                     
-                    # Only update records that are after the latest technical analysis date
-                    if current_date > latest_tech_date:
+                    # 更新条件：当前日期大于等于最新技术分析日期（包含最新的数据）
+                    if current_date >= latest_tech_date:
                         tech_doc = {
                             'code': stock_code,
                             'date': current_date,
@@ -888,7 +889,7 @@ class TechnicalAnalysisService:
                 start_date = None  # 如果没有数据，则从最早的数据开始
                 logger.info(f"股票 {stock_code} 没有找到已有的技术指标数据，将更新全部数据")
             
-            # 构建日期范围参数
+            # 构建日期范围参数，确保包含最新的日期
             date_range = {
                 'start_date': start_date.strftime('%Y-%m-%d 00:00:00') if isinstance(start_date, datetime) else start_date,
                 'end_date': datetime.now().strftime('%Y-%m-%d 23:59:59')
@@ -1070,9 +1071,8 @@ class TechnicalAnalysisService:
             if historical_data and len(historical_data) > 0:
                 stock_name = historical_data[0].get('code_name', stock_code)
             
-            # 从倒数第3天开始向前检查（确保有足够的数据进行准确评估）
-            # 不再检查最新的数据，因为可能不完整
-            for i in range(len(df) - 3, max(0, len(df) - days_range - 1), -1):
+            # 从倒数第1天开始向前检查（确保包含最新的数据）
+            for i in range(len(df) - 1, max(-1, len(df) - days_range - 2), -1):
                 current = df.iloc[i]
                 previous = df.iloc[i-1] if i > 0 else None
                 
@@ -1281,4 +1281,3 @@ class TechnicalAnalysisService:
                 "success": False,
                 "message": str(e)
             }
-
