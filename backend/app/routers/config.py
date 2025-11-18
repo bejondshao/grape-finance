@@ -3,11 +3,12 @@ from typing import List, Dict, Any, Optional
 import logging
 
 from app.services.mongodb_service import MongoDBService
+from app.models.config import Configuration, ConfigurationCreate, ConfigurationUpdate, SchedulerTimingConfig
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-@router.get("/")
+@router.get("/", response_model=Dict[str, Any])
 async def get_configurations(
     category: Optional[str] = None,
     sub_category: Optional[str] = None
@@ -32,22 +33,19 @@ async def get_configurations(
         logger.error(f"Error getting configurations: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.post("/")
-async def create_configuration(config_create: Dict[str, Any]):
+@router.post("/", response_model=Dict[str, Any])
+async def create_configuration(config_create: ConfigurationCreate):
     """Create a new configuration value"""
     try:
         mongo_service = MongoDBService()
         
-        category = config_create.get('category')
-        sub_category = config_create.get('sub_category')
-        key = config_create.get('key')
-        value = config_create.get('value')
-        description = config_create.get('description', '')
-        
-        if not all([category, sub_category, key, value]):
-            raise HTTPException(status_code=400, detail="Missing required fields")
-        
-        success = await mongo_service.set_config_value(category, sub_category, key, value, description)
+        success = await mongo_service.set_config_value(
+            config_create.category, 
+            config_create.sub_category, 
+            config_create.key, 
+            config_create.value, 
+            config_create.description
+        )
         if success:
             return {"status": "success", "message": "Configuration created"}
         else:
@@ -56,22 +54,19 @@ async def create_configuration(config_create: Dict[str, Any]):
         logger.error(f"Error creating configuration: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.put("/")
-async def update_configuration(config_update: Dict[str, Any]):
+@router.put("/", response_model=Dict[str, Any])
+async def update_configuration(config_update: ConfigurationUpdate):
     """Update a configuration value"""
     try:
         mongo_service = MongoDBService()
         
-        category = config_update.get('category')
-        sub_category = config_update.get('sub_category')
-        key = config_update.get('key')
-        value = config_update.get('value')
-        description = config_update.get('description', '')
-        
-        if not all([category, sub_category, key, value]):
-            raise HTTPException(status_code=400, detail="Missing required fields")
-        
-        success = await mongo_service.set_config_value(category, sub_category, key, value, description)
+        success = await mongo_service.set_config_value(
+            config_update.category, 
+            config_update.sub_category, 
+            config_update.key, 
+            config_update.value, 
+            config_update.description
+        )
         if success:
             return {"status": "success", "message": "Configuration updated"}
         else:
@@ -80,29 +75,29 @@ async def update_configuration(config_update: Dict[str, Any]):
         logger.error(f"Error updating configuration: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.post("/scheduler/timing")
-async def update_scheduler_timing(config: Dict[str, str]):
+@router.post("/scheduler/timing", response_model=Dict[str, Any])
+async def update_scheduler_timing(config: SchedulerTimingConfig):
     """Update scheduler timing configurations"""
     try:
         mongo_service = MongoDBService()
         
         # Update stock list fetch cron expression
-        if "stock_list_fetch_cron" in config:
+        if config.stock_list_fetch_cron:
             await mongo_service.set_config_value(
                 "scheduler", 
                 "timing", 
                 "stock_list_fetch_cron", 
-                config["stock_list_fetch_cron"],
+                config.stock_list_fetch_cron,
                 "Cron expression for stock list fetching"
             )
         
         # Update stock history fetch cron expression
-        if "stock_history_fetch_cron" in config:
+        if config.stock_history_fetch_cron:
             await mongo_service.set_config_value(
                 "scheduler", 
                 "timing", 
                 "stock_history_fetch_cron", 
-                config["stock_history_fetch_cron"],
+                config.stock_history_fetch_cron,
                 "Cron expression for stock history fetching"
             )
             

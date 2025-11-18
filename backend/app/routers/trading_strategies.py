@@ -16,6 +16,12 @@ from app.services.data_service import DataService
 from app.strategies.right_side_trading_strategy import RightSideTradingStrategy
 from app.strategies.strong_k_breakout_strategy import StrongKBreakoutStrategy
 from app.strategies.bottom_reversal_strategy import BottomReversalStrategy
+from app.models.trading_strategy import (
+    TradingStrategyBase, 
+    TradingStrategyCreate, 
+    TradingStrategyUpdate,
+    Signal
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -28,7 +34,7 @@ strategy_execution_task = None
 # 添加一个字典来存储执行任务的结果
 strategy_execution_results = {}
 
-@router.get("/strategies")
+@router.get("/strategies", response_model=List[TradingStrategyBase])
 async def get_trading_strategies():
     """Get all trading strategies"""
     try:
@@ -43,21 +49,24 @@ async def get_trading_strategies():
         logger.error(f"Error getting trading strategies: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.post("/strategies")
-async def create_trading_strategy(strategy: Dict[str, Any]):
+@router.post("/strategies", response_model=Dict[str, Any])
+async def create_trading_strategy(strategy: TradingStrategyCreate):
     """Create a new trading strategy"""
     try:
         logger.info(f"创建新的交易策略: {strategy}")
         mongo_service = MongoDBService()
-        strategy['created_at'] = datetime.utcnow()
         
-        success = await mongo_service.insert_one('trading_strategies', strategy)
+        # Convert Pydantic model to dict
+        strategy_dict = strategy.dict(exclude_unset=True)
+        strategy_dict['created_at'] = datetime.utcnow()
+        
+        success = await mongo_service.insert_one('trading_strategies', strategy_dict)
         if success:
             # Convert ObjectId to string for JSON serialization
-            if '_id' in strategy and isinstance(strategy['_id'], ObjectId):
-                strategy['_id'] = str(strategy['_id'])
-            logger.info(f"策略创建成功: {strategy.get('name', 'Unknown')}")
-            return {"status": "success", "message": "Strategy created", "strategy": strategy}
+            if '_id' in strategy_dict and isinstance(strategy_dict['_id'], ObjectId):
+                strategy_dict['_id'] = str(strategy_dict['_id'])
+            logger.info(f"策略创建成功: {strategy_dict.get('name', 'Unknown')}")
+            return {"status": "success", "message": "Strategy created", "strategy": strategy_dict}
         else:
             logger.error("策略创建失败: 数据库插入失败")
             raise HTTPException(status_code=500, detail="Failed to create strategy")
