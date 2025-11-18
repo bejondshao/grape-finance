@@ -79,3 +79,34 @@ async def update_configuration(config_update: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error updating configuration: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.post("/scheduler/timing")
+async def update_scheduler_timing(config: Dict[str, str]):
+    """Update scheduler timing configurations"""
+    try:
+        mongo_service = MongoDBService()
+        
+        # Update stock list fetch cron expression
+        if "stock_list_fetch_cron" in config:
+            await mongo_service.set_config_value(
+                "scheduler", 
+                "timing", 
+                "stock_list_fetch_cron", 
+                config["stock_list_fetch_cron"],
+                "Cron expression for stock list fetching"
+            )
+        
+        # Update stock history fetch cron expression
+        if "stock_history_fetch_cron" in config:
+            await mongo_service.set_config_value(
+                "scheduler", 
+                "timing", 
+                "stock_history_fetch_cron", 
+                config["stock_history_fetch_cron"],
+                "Cron expression for stock history fetching"
+            )
+            
+        return {"status": "success", "message": "Scheduler timing updated"}
+    except Exception as e:
+        logger.error(f"Error updating scheduler timing: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -468,3 +468,42 @@ class MongoDBService:
         except PyMongoError as e:
             logger.error(f"Error getting latest technical date for {stock_code}: {str(e)}")
             return None
+    
+    async def get_latest_complete_technical_date(self, stock_code: str) -> Optional[str]:
+        """
+        获取股票技术分析集合中的最新完整数据日期（所有指标都存在的日期）
+        
+        Args:
+            stock_code: 股票代码
+            
+        Returns:
+            Optional[str]: 最新完整数据日期字符串，如果集合不存在或为空则返回None
+        """
+        try:
+            collection_name = self.get_technical_collection_name(stock_code)
+            logger.debug(f"Getting latest complete technical date for {stock_code}, collection: {collection_name}")
+            
+            # 查询最新的日期，确保所有技术指标都存在
+            query = {
+                "cci": {"$exists": True, "$ne": None},
+                "rsi": {"$exists": True, "$ne": None},
+                "macd_line": {"$exists": True, "$ne": None},
+                "kdj_k": {"$exists": True, "$ne": None},
+                "bb_upper": {"$exists": True, "$ne": None}
+            }
+            
+            latest = await self.db[collection_name].find_one(
+                query,
+                projection={"date": 1, "_id": 0}, 
+                sort=[("date", DESCENDING)]
+            )
+            
+            if latest:
+                date_str = latest.get("date").strftime("%Y-%m-%d %H:%M:%S") if latest.get("date") else None
+                logger.debug(f"Latest complete technical date for {stock_code}: {date_str}")
+                return date_str
+            logger.debug(f"No latest complete technical date found for {stock_code}")
+            return None
+        except PyMongoError as e:
+            logger.error(f"Error getting latest complete technical date for {stock_code}: {str(e)}")
+            return None

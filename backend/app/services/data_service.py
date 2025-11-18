@@ -32,14 +32,6 @@ class DataService:
 
             # Login to BaoStock
             if await self._login_baostock():
-                # Check if today is Monday before fetching stock list
-                today = datetime.now().weekday()
-                if today == 0:  # Monday is 0 (0=Monday, 1=Tuesday, ..., 6=Sunday)
-                    # Fetch stock list only on Monday
-                    await self.fetch_stock_list()
-                else:
-                    logger.info("Today is not Monday, skipping stock list fetch on startup")
-
                 # Schedule regular data updates
                 await self._setup_scheduler()
             else:
@@ -61,22 +53,56 @@ class DataService:
 
     async def _setup_scheduler(self):
         """Setup scheduled jobs"""
-        # Schedule stock list update every day at 18:00
+        # Get scheduler times from configuration or use defaults
+        stock_list_cron = await self.mongo_service.get_config_value(
+            "scheduler", "timing", "stock_list_fetch_cron", "00 20 * * 1"
+        )
+        
+        stock_history_cron = await self.mongo_service.get_config_value(
+            "scheduler", "timing", "stock_history_fetch_cron", "04 20 * * *"
+        )
+        
+        # Parse cron expressions
+        try:
+            stock_list_trigger = self._parse_cron_expression(stock_list_cron)
+            stock_history_trigger = self._parse_cron_expression(stock_history_cron)
+        except Exception as e:
+            logger.error(f"Error parsing cron expressions: {str(e)}")
+            # Use default triggers
+            stock_list_trigger = CronTrigger(hour=20, minute=30)
+            stock_history_trigger = CronTrigger(hour=20, minute=32)
+        
+        # Schedule stock list update
         self.scheduler.add_job(
             self.fetch_stock_list,
-            trigger=CronTrigger(hour=20, minute=30),
+            trigger=stock_list_trigger,
             id="fetch_stock_list",
         )
 
-        # Schedule daily data update every day at 19:00
+        # Schedule daily data update
         self.scheduler.add_job(
             self.fetch_all_stock_daily_data,
-            trigger=CronTrigger(hour=20, minute=32),
+            trigger=stock_history_trigger,
             id="fetch_daily_data",
         )
 
         self.scheduler.start()
-        logger.info("Data scheduler started")
+        logger.info(f"Data scheduler started with stock list cron: {stock_list_cron}, history cron: {stock_history_cron}")
+
+    def _parse_cron_expression(self, cron_expr: str) -> CronTrigger:
+        """Parse cron expression string into CronTrigger"""
+        parts = cron_expr.strip().split()
+        if len(parts) != 5:
+            raise ValueError(f"Invalid cron expression: {cron_expr}")
+        
+        minute, hour, day, month, day_of_week = parts
+        return CronTrigger(
+            minute=minute if minute != '*' else None,
+            hour=hour if hour != '*' else None,
+            day=day if day != '*' else None,
+            month=month if month != '*' else None,
+            day_of_week=day_of_week if day_of_week != '*' else None
+        )
 
     def _convert_ts_code(self, ts_code: str) -> str:
         """Convert TuShare ts_code format (123456.SH) to standard format (sh.123456)"""

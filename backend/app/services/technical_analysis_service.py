@@ -410,8 +410,8 @@ class TechnicalAnalysisService:
             collection_name = self.mongo_service.get_technical_collection_name(stock_code)
             operations = []
             
-            # Get the latest technical analysis date to avoid re-updating existing records
-            latest_tech_date_str = await self.mongo_service.get_latest_technical_date(stock_code)
+            # Get the latest complete technical analysis date to avoid re-updating existing records
+            latest_tech_date_str = await self.mongo_service.get_latest_complete_technical_date(stock_code)
             latest_tech_date = datetime.strptime(latest_tech_date_str, "%Y-%m-%d %H:%M:%S") if latest_tech_date_str else datetime.min
             
             # 修改这里的逻辑，确保包含最新的数据点
@@ -529,7 +529,7 @@ class TechnicalAnalysisService:
             # If no date range provided, only update new data after the last technical analysis
             if not date_range:
                 logger.debug(f"Checking latest tech date for {stock_code}")
-                latest_tech_date = await self.mongo_service.get_latest_technical_date(stock_code)
+                latest_tech_date = await self.mongo_service.get_latest_complete_technical_date(stock_code)
                 logger.debug(f"Latest tech date for {stock_code}: {latest_tech_date}")
                 if latest_tech_date:
                     # Convert to datetime object
@@ -604,7 +604,7 @@ class TechnicalAnalysisService:
             # If no date range provided, only update new data after the last technical analysis
             if not date_range:
                 logger.debug(f"Checking latest tech date for {stock_code}")
-                latest_tech_date = await self.mongo_service.get_latest_technical_date(stock_code)
+                latest_tech_date = await self.mongo_service.get_latest_complete_technical_date(stock_code)
                 logger.debug(f"Latest tech date for {stock_code}: {latest_tech_date}")
                 if latest_tech_date:
                     # Convert to datetime object
@@ -710,7 +710,7 @@ class TechnicalAnalysisService:
                         continue
                     
                     # 获取该股票的最新技术分析日期
-                    latest_tech_date = await self.mongo_service.get_latest_technical_date(stock_code)
+                    latest_tech_date = await self.mongo_service.get_latest_complete_technical_date(stock_code)
                     
                     # 确定起始日期
                     if latest_tech_date:
@@ -879,7 +879,7 @@ class TechnicalAnalysisService:
                 }
             
             # 获取该股票的最新技术分析日期
-            latest_tech_date = await self.mongo_service.get_latest_technical_date(stock_code)
+            latest_tech_date = await self.mongo_service.get_latest_complete_technical_date(stock_code)
             
             # 确定起始日期
             if latest_tech_date:

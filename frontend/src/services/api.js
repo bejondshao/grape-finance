@@ -71,6 +71,7 @@ export const tradingStrategyService = {
   createStrategy: (strategy) => api.post('/trading-strategies/strategies', strategy),
   createRightSideStrategy: (params) => api.post('/trading-strategies/strategies/right_side', params),
   createStrongKStrategy: (params) => api.post('/trading-strategies/strategies/strong_k', params),
+  createBottomReversalStrategy: (params) => api.post('/trading-strategies/strategies/bottom_reversal', params),
   updateStrategy: (id, strategy) => api.put(`/trading-strategies/strategies/${id}`, strategy),
   deleteStrategy: (id) => api.delete(`/trading-strategies/strategies/${id}`),
   executeStrategy: (id) => api.post(`/trading-strategies/evaluate`),

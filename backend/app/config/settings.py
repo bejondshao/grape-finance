@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     data_fetch_start_date: str = "1990-12-19"
     sleep_timer: float = 1.0
+    
+    # Scheduler times for different tasks
+    stock_list_fetch_cron: str = "00 20 * * 1"  # Every Monday at 20:00
+    stock_history_fetch_cron: str = "04 20 * * *"  # Every day at 20:32
 
     # Trading
     stamp_duty_rate: float = 0.0005

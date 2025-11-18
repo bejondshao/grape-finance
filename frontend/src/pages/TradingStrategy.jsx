@@ -16,6 +16,7 @@ const TradingStrategy = () => {
   const [form] = Form.useForm()
   const [rightSideForm] = Form.useForm()
   const [strongKForm] = Form.useForm()
+  const [bottomReversalForm] = Form.useForm()
 
   // 手动执行策略相关状态
   const [executeLoading, setExecuteLoading] = useState(false)
@@ -48,6 +49,8 @@ const TradingStrategy = () => {
       width: 120,
       render: (type) => {
         if (type === 'right_side') return '右侧交易';
+        if (type === 'strong_k') return '强K突破';
+        if (type === 'bottom_reversal') return '底部反转';
         return type || '通用';
       }
     },
@@ -192,6 +195,7 @@ const TradingStrategy = () => {
     form.resetFields()
     rightSideForm.resetFields()
     strongKForm.resetFields()
+    bottomReversalForm.resetFields()
     // 设置右侧交易策略的默认值
     setTimeout(() => {
       rightSideForm.setFieldsValue({
@@ -245,6 +249,19 @@ const TradingStrategy = () => {
         days_range: params.days_range ?? 30
       })
       setActiveTab('strong_k')
+    } else if (strategy.type === 'bottom_reversal') {
+      const params = strategy.parameters || {}
+      bottomReversalForm.setFieldsValue({
+        name: strategy.name,
+        description: strategy.description,
+        operation: strategy.operation,
+        is_active: strategy.is_active,
+        initial_capital: params.initial_capital ?? 100000,
+        max_position_pct: params.max_position_pct ?? 0.03,
+        max_positions: params.max_positions ?? 5,
+        days_range: params.days_range ?? 30
+      })
+      setActiveTab('bottom_reversal')
     } else {
       form.setFieldsValue({
         ...strategy,
@@ -311,6 +328,24 @@ const TradingStrategy = () => {
           }
         } else {
           message.success('强K策略执行成功');
+        }
+      } else if (strategy && strategy.type === 'bottom_reversal') {
+        // 直接执行底部反转策略，使用策略中保存的参数
+        message.info('正在启动底部反转策略执行...');
+        const params = {
+          strategy_type: 'bottom_reversal',
+          stock_codes: [], // 空数组表示执行所有股票
+          parameters: strategy.parameters || {}
+        };
+        const executeResponse = await tradingStrategyService.manualExecuteStrategy(params);
+        if (executeResponse && executeResponse.status === 'started') {
+          message.success('底部反转策略已启动执行');
+          // 开始轮询检查执行状态
+          if (executeResponse.execution_id) {
+            pollExecutionStatus(executeResponse.execution_id);
+          }
+        } else {
+          message.success('底部反转策略执行成功');
         }
       } else {
         message.info('正在启动策略执行...');
@@ -526,6 +561,33 @@ const TradingStrategy = () => {
           await tradingStrategyService.createStrongKStrategy(strategyParams)
           message.success('强K策略创建成功')
         }
+      } else if (activeTab === 'bottom_reversal') {
+        values = await bottomReversalForm.validateFields()
+        
+        // 构造底部反转策略参数
+        const strategyParams = {
+          name: values.name,
+          description: values.description,
+          operation: values.operation,
+          is_active: values.is_active,
+          type: 'bottom_reversal',
+          parameters: {
+            initial_capital: values.initial_capital,
+            max_position_pct: values.max_position_pct,
+            max_positions: values.max_positions,
+            days_range: values.days_range
+          }
+        }
+        
+        if (editingStrategy) {
+          // 更新策略
+          await tradingStrategyService.updateStrategy(editingStrategy._id, strategyParams)
+          message.success('底部反转策略更新成功')
+        } else {
+          // 创建策略
+          await tradingStrategyService.createBottomReversalStrategy(strategyParams)
+          message.success('底部反转策略创建成功')
+        }
       } else {
         values = await form.validateFields()
         
@@ -543,6 +605,7 @@ const TradingStrategy = () => {
       form.resetFields()
       rightSideForm.resetFields()
       strongKForm.resetFields()
+      bottomReversalForm.resetFields()
       fetchStrategies()
     } catch (error) {
       console.error('Failed to save strategy:', error);
@@ -562,6 +625,7 @@ const TradingStrategy = () => {
     form.resetFields()
     rightSideForm.resetFields()
     strongKForm.resetFields()
+    bottomReversalForm.resetFields()
   }
 
   const operationOptions = [
@@ -869,6 +933,80 @@ const TradingStrategy = () => {
       )
     },
     {
+      key: 'bottom_reversal',
+      label: '底部反转策略',
+      children: (
+        <Form form={bottomReversalForm} layout="vertical">
+          <Card title="基础设置" size="small">
+            <Form.Item name="name" label="策略名称" rules={[{ required: true }]}> 
+              <Input placeholder="例如：标准底部反转策略" />
+            </Form.Item>
+
+            <Form.Item name="description" label="策略描述">
+              <TextArea rows={3} placeholder="描述该策略的交易逻辑和适用场景" />
+            </Form.Item>
+
+            <Form.Item name="operation" label="操作建议" rules={[{ required: true }]}> 
+              <Select>
+                {operationOptions.map(op => (
+                  <Option key={op.value} value={op.value}>
+                    {op.label}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item name="is_active" label="是否激活" valuePropName="checked">
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            </Form.Item>
+          </Card>
+
+          <Card title="策略参数" size="small" style={{ marginTop: 16 }}>
+            <Form.Item 
+              name="initial_capital" 
+              label="初始资金" 
+              initialValue={100000}
+            >
+              <InputNumber style={{ width: '100%' }} min={10000} step={10000} />
+            </Form.Item>
+
+            <Form.Item 
+              name="max_position_pct" 
+              label="单笔最大风险比例" 
+              initialValue={0.03}
+              extra="例如0.03表示单笔交易最大风险为总资金的3%"
+            >
+              <InputNumber style={{ width: '100%' }} min={0.01} max={0.1} step={0.01} />
+            </Form.Item>
+
+            <Form.Item 
+              name="max_positions" 
+              label="最大持仓数量" 
+              initialValue={5}
+            >
+              <InputNumber style={{ width: '100%' }} min={1} max={20} />
+            </Form.Item>
+            
+            <Form.Item 
+              name="days_range" 
+              label="执行范围（天）" 
+              initialValue={30}
+            >
+              <InputNumber style={{ width: '100%' }} min={1} max={365} />
+            </Form.Item>
+          </Card>
+          
+          <Card title="策略说明" size="small" style={{ marginTop: 16 }}>
+            <p><strong>底部反转策略原理：</strong></p>
+            <p>1. 底部区域识别：股价处于相对低位，前期有明显下跌</p>
+            <p>2. 成交量确认：底部区域成交量萎缩后开始恢复</p>
+            <p>3. 反转信号确认：连续上涨，成交量明显放大</p>
+            <p>4. 技术指标验证：MACD金叉，价格突破关键均线</p>
+          </Card>
+        </Form>
+      )
+    },
+    {
       key: 'manual_execute',
       label: '手动执行策略',
       children: (
@@ -879,6 +1017,7 @@ const TradingStrategy = () => {
                 <Select value={strategyType} onChange={setStrategyType}>
                   <Option value="right_side">右侧交易策略</Option>
                   <Option value="strong_k">强K策略</Option>
+                  <Option value="bottom_reversal">底部反转策略</Option>
                 </Select>
               </Form.Item>
 

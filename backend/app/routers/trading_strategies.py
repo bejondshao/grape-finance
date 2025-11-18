@@ -15,6 +15,7 @@ from app.services.technical_analysis_service import TechnicalAnalysisService
 from app.services.data_service import DataService
 from app.strategies.right_side_trading_strategy import RightSideTradingStrategy
 from app.strategies.strong_k_breakout_strategy import StrongKBreakoutStrategy
+from app.strategies.bottom_reversal_strategy import BottomReversalStrategy
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -255,6 +256,69 @@ async def create_strong_k_strategy(params: Dict[str, Any] = None):
         raise HTTPException(status_code=400, detail="策略名称已存在")
     except Exception as e:
         logger.error(f"Error creating strong K trading strategy: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.post("/strategies/bottom_reversal")
+async def create_bottom_reversal_strategy(params: Dict[str, Any] = None):
+    """Create a bottom reversal trading strategy"""
+    try:
+        logger.info(f"创建底部反转策略，参数: {params}")
+        mongo_service = MongoDBService()
+        
+        # 默认参数
+        if params is None:
+            params = {}
+        
+        # 处理参数中的布尔值，确保从params中正确获取值
+        parameters = params.get("parameters", {})
+        
+        # 构造策略对象，优先使用用户输入的值
+        strategy = {
+            "name": params.get("name"),
+            "description": params.get("description"),
+            "type": "bottom_reversal",
+            "parameters": {
+                "initial_capital": parameters.get("initial_capital"),
+                "max_position_pct": parameters.get("max_position_pct"),
+                "max_positions": parameters.get("max_positions")
+            },
+            "operation": params.get("operation"),
+            "is_active": params.get("is_active"),
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        # 清理参数，但保留用户明确设置的false值
+        strategy["parameters"] = {k: v for k, v in strategy["parameters"].items() if v is not None}
+        
+        # 设置必填字段的默认值（仅当用户未提供时）
+        if not strategy.get("name"):
+            # 检查是否已存在默认名称，如果存在则添加时间戳
+            default_name = "底部反转策略"
+            existing_strategy = await mongo_service.find_one('trading_strategies', {'name': default_name})
+            if existing_strategy:
+                import time
+                strategy["name"] = f"{default_name}_{int(time.time())}"
+            else:
+                strategy["name"] = default_name
+        if not strategy.get("operation"):
+            strategy["operation"] = "关注"
+        if strategy.get("is_active") is None:
+            strategy["is_active"] = True
+        
+        success = await mongo_service.insert_one('trading_strategies', strategy)
+        if success:
+            # Convert ObjectId to string for JSON serialization
+            if '_id' in strategy and isinstance(strategy['_id'], ObjectId):
+                strategy['_id'] = str(strategy['_id'])
+            return {"status": "success", "message": "底部反转策略创建成功", "strategy": strategy}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to create strategy")
+    except DuplicateKeyError as e:
+        logger.error(f"Duplicate key error creating bottom reversal trading strategy: {str(e)}")
+        raise HTTPException(status_code=400, detail="策略名称已存在")
+    except Exception as e:
+        logger.error(f"Error creating bottom reversal trading strategy: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/evaluate")
@@ -712,6 +776,100 @@ async def _execute_strategy_background(execution_id: str, strategy_type: str, st
                         "error": str(e)
                     })
         
+        elif strategy_type == "bottom_reversal":
+            # 执行底部反转策略
+            logger.info(f"开始执行底部反转策略，执行ID: {execution_id}，股票数量: {len(stock_codes)}, 执行范围: {days_range}天")
+            for stock_code in stock_codes:
+                # 检查是否需要取消执行
+                if strategy_execution_cancelled:
+                    logger.info(f"策略执行已被取消，执行ID: {execution_id}")
+                    break
+                    
+                try:
+                    logger.info(f"处理股票 {stock_code}，执行ID: {execution_id}")
+                    # 获取股票历史数据
+                    collection_name = mongo_service.get_collection_name(stock_code)
+                    historical_data = await mongo_service.find(
+                        collection_name, 
+                        {'code': stock_code},
+                        sort=[('date', -1)],
+                        limit=days_range  # 使用用户指定的天数范围
+                    )
+                    
+                    if historical_data:
+                        try:
+                            logger.info(f"获取到股票 {stock_code} 的 {len(historical_data)} 条历史数据，执行ID: {execution_id}")
+                            # 创建策略实例并执行
+                            strategy = BottomReversalStrategy(
+                                initial_capital=strategy_params.get("initial_capital", 100000),
+                                max_position_pct=strategy_params.get("max_position_pct", 0.03),
+                                max_positions=strategy_params.get("max_positions", 5)
+                            )
+                            
+                            # 转换数据格式
+                            import pandas as pd
+                            df = pd.DataFrame(historical_data)
+                            df['date'] = pd.to_datetime(df['date'])
+                            df = df.sort_values('date')
+                            
+                            logger.info(f"数据形状: {df.shape}，执行ID: {execution_id}")
+                            
+                            # 执行策略
+                            signals = strategy.generate_signals(df, stock_code)
+                            logger.info(f"股票 {stock_code} 生成 {len(signals)} 个信号，执行ID: {execution_id}")
+                            
+                            # 转换信号为字典格式
+                            signals_dict = []
+                            try:
+                                for signal in signals:
+                                    signal_dict = {
+                                        "symbol": signal.symbol,
+                                        "action": signal.action,
+                                        "price": signal.price,
+                                        "stop_loss": getattr(signal, 'stop_loss', None),
+                                        "target_price": getattr(signal, 'target_price', None),
+                                        "timestamp": signal.timestamp.isoformat() if hasattr(signal.timestamp, 'isoformat') else str(signal.timestamp),
+                                        "confidence": signal.confidence,
+                                        "reason": signal.reason
+                                    }
+                                    signals_dict.append(signal_dict)
+                            except Exception as e:
+                                logger.error(f"转换信号为字典时发生错误，股票: {stock_code}, 错误: {str(e)}, 执行ID: {execution_id}")
+                                raise e
+                            
+                            if signals_dict:
+                                logger.info(f"股票 {stock_code} 生成 {len(signals_dict)} 个有效信号，执行ID: {execution_id}")
+                                results.append({
+                                    "stock_code": stock_code,
+                                    "signals": signals_dict,
+                                    "status": "success"
+                                })
+                            else:
+                                logger.info(f"股票 {stock_code} 未生成有效信号，执行ID: {execution_id}")
+                                results.append({
+                                    "stock_code": stock_code,
+                                    "signals": [],
+                                    "status": "no_signals"
+                                })
+                        except Exception as e:
+                            logger.error(f"生成信号时发生错误，股票: {stock_code}, 错误: {str(e)}, 执行ID: {execution_id}", exc_info=True)
+                            raise e
+                    else:
+                        logger.warning(f"股票 {stock_code} 无历史数据，执行ID: {execution_id}")
+                        results.append({
+                            "stock_code": stock_code,
+                            "signals": [],
+                            "status": "no_data"
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"执行底部反转策略时发生错误，股票: {stock_code}, 错误: {str(e)}, 执行ID: {execution_id}", exc_info=True)
+                    results.append({
+                        "stock_code": stock_code,
+                        "signals": [],
+                        "status": "error",
+                        "error": str(e)
+                    })
         # 重置执行状态
         strategy_execution_in_progress = False
         strategy_execution_cancelled = False

@@ -24,9 +24,9 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
 
-# 创建带日期的文件名
+# 创建带日期的文件名，格式为 grape_finance-YYYY-MM-DD.log
 current_date = datetime.datetime.now().strftime('%Y-%m-%d')
-log_filename = os.path.join(log_dir, f"grape_finance.{current_date}.log")
+log_filename = os.path.join(log_dir, f"grape_finance-{current_date}.log")
 
 # File handler with UTF-8 encoding
 file_handler = logging.FileHandler(log_filename, encoding='utf-8')
@@ -61,6 +61,9 @@ async def lifespan(app: FastAPI):
 
     # Initialize configuration
     await mongo_service.initialize_configurations()
+    
+    # Initialize default scheduler timing configurations
+    await _initialize_scheduler_configs(mongo_service)
 
     # Start data service if scheduler is enabled
     if settings.scheduler_enabled:
@@ -73,6 +76,27 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info(f"Shutting down {settings.app_name} Application")
+
+
+async def _initialize_scheduler_configs(mongo_service: MongoDBService):
+    """Initialize default scheduler timing configurations"""
+    # Set default stock list fetch cron expression
+    await mongo_service.set_config_value(
+        "scheduler",
+        "timing", 
+        "stock_list_fetch_cron",
+        settings.stock_list_fetch_cron,
+        "Cron expression for stock list fetching (minute hour day month day_of_week)"
+    )
+    
+    # Set default stock history fetch cron expression
+    await mongo_service.set_config_value(
+        "scheduler",
+        "timing",
+        "stock_history_fetch_cron", 
+        settings.stock_history_fetch_cron,
+        "Cron expression for stock history fetching (minute hour day month day_of_week)"
+    )
 
 
 app = FastAPI(
