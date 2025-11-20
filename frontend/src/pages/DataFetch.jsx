@@ -38,11 +38,16 @@ const DataFetch = () => {
 
   const handleTriggerFetch = async () => {
     try {
-      await stockService.triggerFetch()
-      message.success('Data fetch triggered successfully')
-      setIsRunning(true)
+      const response = await stockService.triggerDataFetch()
+      if (response.status === 'success' || response.data?.status === 'success') {
+        message.success('Data fetch triggered successfully')
+        setIsRunning(true)
+      } else {
+        message.error(`Failed to trigger data fetch: ${response.message || response.data?.message || 'Unknown error'}`)
+      }
     } catch (error) {
-      message.error('Failed to trigger data fetch')
+      console.error('Error triggering data fetch:', error)
+      message.error(`Failed to trigger data fetch: ${error.response?.data?.detail || error.message || 'Unknown error'}`)
     }
   }
 

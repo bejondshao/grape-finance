@@ -181,27 +181,6 @@ class DataService:
 
         return stock_list, rs
 
-    async def fetch_with_semaphore(self, stock_code, max_concurrent: int = 5):
-        semaphore = asyncio.Semaphore(max_concurrent)  # Limit concurrent requests
-        async with semaphore:
-            logger.info("calling fetch_with_semaphore")
-            return await self.fetch_stock_daily_data(stock_code)
-
-    async def fetch_stock_data_concurrently(self, stocks):
-        """Fetch multiple stocks concurrently using asyncio"""
-
-        logger.info("fetch_stock_data_concurrently started")
-        # Filter out Beijing Stock Exchange (bj) stocks
-        # because BaoStock does not provide data for Beijing Stock Exchange
-        filtered_stocks = [stock for stock in stocks if not stock["code"].startswith("bj.")]
-        logger.info(f"Filtered out {len(stocks) - len(filtered_stocks)} Beijing Stock Exchange stocks")
-        
-        tasks = [self.fetch_with_semaphore(stock["code"]) for stock in filtered_stocks]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        successful_fetches = sum(1 for result in results if result is True)
-        return successful_fetches
-
     async def fetch_stock_list(self, date: str = None) -> bool:
         """Fetch all stock list and save to database"""
         if self.is_fetching:
@@ -224,6 +203,11 @@ class DataService:
                 for _, row in df.iterrows():
                     # Convert ts_code to standard format
                     code = self._convert_ts_code(row["ts_code"])
+                    
+                    # Filter out Beijing Stock Exchange (bj) stocks
+                    # because BaoStock does not provide data for Beijing Stock Exchange
+                    if code.startswith("bj."):
+                        continue
 
                     stock_doc = {
                         "code": code,
@@ -340,59 +324,87 @@ class DataService:
             self.is_fetching = False
 
     async def fetch_all_stock_daily_data(self):
+        """Fetch daily data for all stocks"""
         # Login to BaoStock
-        if await self._login_baostock():
-            """Fetch daily data for all stocks"""
-            if self.is_fetching:
-                logger.info("Daily data fetch already in progress")
+        login_success = await self._login_baostock()
+        if not login_success:
+            logger.error("Failed to login to BaoStock, cannot fetch stock data")
+            return
+
+        if self.is_fetching:
+            logger.info("Daily data fetch already in progress")
+            return
+
+        self.is_fetching = True
+        try:
+            # Get all stock codes, excluding Beijing Stock Exchange (bj) stocks
+            # because BaoStock does not provide data for Beijing Stock Exchange
+            stocks = await self.mongo_service.find(
+                "stock_info", 
+                {"code": {"$not": {"$regex": "^bj\\."}}}, 
+                {"code": 1}
+            )
+            if not stocks:
+                logger.warning("No stocks found in database")
                 return
 
-            self.is_fetching = True
-            try:
-                # Get all stock codes, excluding Beijing Stock Exchange (bj) stocks
-                # because BaoStock does not provide data for Beijing Stock Exchange
-                stocks = await self.mongo_service.find(
-                    "stock_info", 
-                    {"code": {"$not": {"$regex": "^bj\\."}}}, 
-                    {"code": 1}
+            # Process stocks in batches for better performance
+            # More concurrent requests for data fetching (30), fewer for processing (3)
+            fetch_semaphore = asyncio.Semaphore(30)  # Increased threads for data fetching
+            process_semaphore = asyncio.Semaphore(3)  # Reduced threads for processing
+            
+            async def fetch_with_semaphores(stock_code):
+                # First semaphore for fetching data from BaoStock
+                async with fetch_semaphore:
+                    result = await self.fetch_stock_daily_data_without_processing(stock_code)
+                    
+                # Second semaphore for processing data (saving to DB and calculating indicators)
+                if result and result[0]:  # if fetch was successful
+                    async with process_semaphore:
+                        stock_code, df = result[1]  # Fixed unpacking - result is (bool, (stock_code, df))
+                        await self.process_stock_data(stock_code, df)
+                
+                return result[0] if result else False
+            
+            # Process stocks in larger batches
+            batch_size = 100  # Increased batch size
+            successful_fetches = 0
+            total_stocks = len(stocks)
+            
+            for i in range(0, total_stocks, batch_size):
+                batch = stocks[i:i + batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1}/{(total_stocks-1)//batch_size + 1} with {len(batch)} stocks")
+                
+                tasks = [fetch_with_semaphores(stock["code"]) for stock in batch]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                batch_successes = sum(1 for result in results if result is True and result is not Exception)
+                successful_fetches += batch_successes
+                
+                logger.info(f"Completed batch {i//batch_size + 1}, successful: {batch_successes}/{len(batch)}")
+
+            logger.info(
+                f"Daily data fetch completed. Successful: {successful_fetches}/{total_stocks}"
+            )
+
+            if successful_fetches > 0:
+                # Update start_date configuration to today
+                today = datetime.now().strftime("%Y-%m-%d")
+                await self.mongo_service.set_config_value(
+                    "scheduler",
+                    "data_fetch",
+                    "start_date",
+                    today,
+                    "Last successful data fetch date",
                 )
-                if not stocks:
-                    logger.warning("No stocks found in database")
-                    return
 
-                sleep_timer = float(
-                    await self.mongo_service.get_config_value(
-                        "scheduler", "data_fetch", "sleep_timer", 1
-                    )
-                )
+        except Exception as e:
+            logger.error(f"Error in fetch_all_stock_daily_data: {str(e)}")
+        finally:
+            self.is_fetching = False
 
-                successful_fetches = 0
-                total_stocks = len(stocks)
-
-                successful_fetches = await self.fetch_stock_data_concurrently(stocks)
-
-                logger.info(
-                    f"Daily data fetch completed. Successful: {successful_fetches}/{total_stocks}"
-                )
-
-                if successful_fetches > 0:
-                    # Update start_date configuration to today
-                    today = datetime.now().strftime("%Y-%m-%d")
-                    await self.mongo_service.set_config_value(
-                        "scheduler",
-                        "data_fetch",
-                        "start_date",
-                        today,
-                        "Last successful data fetch date",
-                    )
-
-            except Exception as e:
-                logger.error(f"Error in fetch_all_stock_daily_data: {str(e)}")
-            finally:
-                self.is_fetching = False
-
-    async def fetch_stock_daily_data(self, stock_code: str) -> bool:
-        """Fetch daily K-line data for a specific stock"""
+    async def fetch_stock_daily_data_without_processing(self, stock_code: str) -> tuple:
+        """Fetch daily K-line data for a specific stock without processing"""
         try:
             # Get the last date from existing data
             last_date = await self._get_last_date_for_stock(stock_code)
@@ -425,7 +437,7 @@ class DataService:
                     },
                     rs.error_msg,
                 )
-                return False
+                return None
 
             data_list = []
             while (rs.error_code == "0") & rs.next():
@@ -433,14 +445,28 @@ class DataService:
 
             if not data_list:
                 logger.info(f"No new data for {stock_code}")
-                return True
+                return (False, None)
 
             # Convert to DataFrame
             df = pd.DataFrame(data_list, columns=rs.fields)
             logger.debug(
                 f"DataFrame structure for {stock_code}: {df.shape}, columns: {df.columns.tolist()}"
             )
+            
+            return (True, (stock_code, df))
 
+        except Exception as e:
+            logger.error(f"Error fetching daily data for {stock_code}: {str(e)}")
+            await self._record_failed_request(
+                "query_history_k_data_plus",
+                {"code": stock_code, "start_date": start_date, "end_date": end_date},
+                str(e),
+            )
+            return None
+
+    async def process_stock_data(self, stock_code: str, df: pd.DataFrame) -> bool:
+        """Process stock data: save to database and calculate technical indicators"""
+        try:
             # Process and save data
             collection_name = self.mongo_service.get_collection_name(stock_code)
             operations = []
@@ -530,13 +556,23 @@ class DataService:
                 return True
 
         except Exception as e:
-            logger.error(f"Error fetching daily data for {stock_code}: {str(e)}")
-            await self._record_failed_request(
-                "query_history_k_data_plus",
-                {"code": stock_code, "start_date": start_date, "end_date": end_date},
-                str(e),
-            )
+            logger.error(f"Error processing data for {stock_code}: {str(e)}")
             return False
+
+    async def fetch_stock_daily_data(self, stock_code: str) -> bool:
+        """Fetch daily K-line data for a specific stock"""
+        # First fetch the data
+        result = await self.fetch_stock_daily_data_without_processing(stock_code)
+        if not result:
+            return False
+            
+        success, data = result
+        if not success:
+            return False
+            
+        # Then process it
+        stock_code, df = data
+        return await self.process_stock_data(stock_code, df)
 
     async def _get_last_date_for_stock(self, stock_code: str) -> Optional[str]:
         """Get the last date for a stock from its daily data collection"""
@@ -581,5 +617,16 @@ class DataService:
             return {"status": "error", "message": "Data fetch already in progress"}
 
         # Run in background to avoid blocking
-        asyncio.create_task(self.fetch_all_stock_daily_data())
+        task = asyncio.create_task(self.fetch_all_stock_daily_data())
+        
+        # Add a callback to handle task exceptions
+        def handle_task_result(task):
+            try:
+                exception = task.exception()
+                if exception:
+                    logger.error(f"Error in data fetch task: {str(exception)}")
+            except asyncio.CancelledError:
+                logger.info("Data fetch task was cancelled")
+        
+        task.add_done_callback(handle_task_result)
         return {"status": "success", "message": "Data fetch started"}

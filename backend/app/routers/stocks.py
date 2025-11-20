@@ -365,7 +365,7 @@ async def trigger_data_fetch():
         result = await data_service.trigger_immediate_fetch()
         # 转换可能的ObjectId
         result = convert_object_id(result)
-        return result
+        return {"status": "success", "data": result}
     except Exception as e:
         logger.error(f"Error triggering data fetch: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -381,4 +381,24 @@ async def stop_data_fetch():
         return {"status": "success", "message": "Data fetch stop command sent"}
     except Exception as e:
         logger.error(f"Error stopping data fetch: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/fetch-progress")
+async def get_fetch_progress():
+    """Get data fetch progress"""
+    try:
+        data_service = DataService()
+        # 返回数据获取进度信息
+        return {
+            "status": "success",
+            "data": {
+                "progress": 0,  # 进度百分比
+                "is_running": data_service.is_fetching,
+                "status": "running" if data_service.is_fetching else "idle",
+                "current_stock": "",  # 当前正在处理的股票
+                "failed_stocks": []  # 失败的股票列表
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting fetch progress: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")

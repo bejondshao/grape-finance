@@ -41,6 +41,7 @@ export const stockService = {
   getStockDetailedInfo: (code) => api.get(`/stocks/${code}/stock-info`),
   triggerDataFetch: () => api.post('/stocks/trigger-fetch'),
   stopDataFetch: () => api.post('/stocks/stop-fetch'), // 添加停止获取数据的API
+  getFetchProgress: () => api.get('/stocks/fetch-progress'), // 添加获取数据获取进度的API
 }
 
 // 技术分析相关API

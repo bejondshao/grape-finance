@@ -428,26 +428,53 @@ class TechnicalAnalysisService:
                         current_date = row['date']
                     
                     # 更新条件：当前日期大于等于最新技术分析日期（包含最新的数据）
-                    if current_date >= latest_tech_date:
-                        tech_doc = {
-                            'code': stock_code,
-                            'date': current_date,
-                            'cci': float(cci_values.iloc[i]),
-                            'cci_period': cci_period,
-                            'cci_constant': cci_constant,
-                            'rsi': float(rsi_values.iloc[i]) if not pd.isna(rsi_values.iloc[i]) else None,
-                            'macd_line': float(macd_values['macd_line'].iloc[i]) if not pd.isna(macd_values['macd_line'].iloc[i]) else None,
-                            'macd_signal': float(macd_values['signal_line'].iloc[i]) if not pd.isna(macd_values['signal_line'].iloc[i]) else None,
-                            'macd_histogram': float(macd_values['macd_histogram'].iloc[i]) if not pd.isna(macd_values['macd_histogram'].iloc[i]) else None,
-                            'kdj_k': float(kdj_values['kdj_k'].iloc[i]) if not pd.isna(kdj_values['kdj_k'].iloc[i]) else None,
-                            'kdj_d': float(kdj_values['kdj_d'].iloc[i]) if not pd.isna(kdj_values['kdj_d'].iloc[i]) else None,
-                            'kdj_j': float(kdj_values['kdj_j'].iloc[i]) if not pd.isna(kdj_values['kdj_j'].iloc[i]) else None,
-                            'bb_upper': float(bb_values['bb_upper'].iloc[i]) if not pd.isna(bb_values['bb_upper'].iloc[i]) else None,
-                            'bb_middle': float(bb_values['bb_middle'].iloc[i]) if not pd.isna(bb_values['bb_middle'].iloc[i]) else None,
-                            'bb_lower': float(bb_values['bb_lower'].iloc[i]) if not pd.isna(bb_values['bb_lower'].iloc[i]) else None,
-                            'updated_at': datetime.utcnow()
-                        }
-                        
+                    # 或者如果该日期的技术指标不完整，也需要重新计算
+                    tech_doc = {
+                        'code': stock_code,
+                        'date': current_date,
+                        'cci': float(cci_values.iloc[i]),
+                        'cci_period': cci_period,
+                        'cci_constant': cci_constant,
+                        'rsi': float(rsi_values.iloc[i]) if not pd.isna(rsi_values.iloc[i]) else None,
+                        'macd_line': float(macd_values['macd_line'].iloc[i]) if not pd.isna(macd_values['macd_line'].iloc[i]) else None,
+                        'macd_signal': float(macd_values['signal_line'].iloc[i]) if not pd.isna(macd_values['signal_line'].iloc[i]) else None,
+                        'macd_histogram': float(macd_values['macd_histogram'].iloc[i]) if not pd.isna(macd_values['macd_histogram'].iloc[i]) else None,
+                        'kdj_k': float(kdj_values['kdj_k'].iloc[i]) if not pd.isna(kdj_values['kdj_k'].iloc[i]) else None,
+                        'kdj_d': float(kdj_values['kdj_d'].iloc[i]) if not pd.isna(kdj_values['kdj_d'].iloc[i]) else None,
+                        'kdj_j': float(kdj_values['kdj_j'].iloc[i]) if not pd.isna(kdj_values['kdj_j'].iloc[i]) else None,
+                        'bb_upper': float(bb_values['bb_upper'].iloc[i]) if not pd.isna(bb_values['bb_upper'].iloc[i]) else None,
+                        'bb_middle': float(bb_values['bb_middle'].iloc[i]) if not pd.isna(bb_values['bb_middle'].iloc[i]) else None,
+                        'bb_lower': float(bb_values['bb_lower'].iloc[i]) if not pd.isna(bb_values['bb_lower'].iloc[i]) else None,
+                        'updated_at': datetime.utcnow()
+                    }
+                    
+                    # 检查是否需要更新该日期的数据
+                    should_update = current_date >= latest_tech_date
+                    
+                    # 如果该日期已经存在，检查是否缺少某些指标
+                    if not should_update:
+                        existing_record = await self.mongo_service.find_one(
+                            collection_name, 
+                            {'code': stock_code, 'date': current_date}
+                        )
+                        if existing_record:
+                            # 检查是否缺少某些指标
+                            missing_indicators = (
+                                'kdj_k' not in existing_record or existing_record['kdj_k'] is None or
+                                'kdj_d' not in existing_record or existing_record['kdj_d'] is None or
+                                'kdj_j' not in existing_record or existing_record['kdj_j'] is None or
+                                'bb_upper' not in existing_record or existing_record['bb_upper'] is None or
+                                'bb_middle' not in existing_record or existing_record['bb_middle'] is None or
+                                'bb_lower' not in existing_record or existing_record['bb_lower'] is None or
+                                'macd_line' not in existing_record or existing_record['macd_line'] is None or
+                                'macd_signal' not in existing_record or existing_record['macd_signal'] is None or
+                                'macd_histogram' not in existing_record or existing_record['macd_histogram'] is None or
+                                'rsi' not in existing_record or existing_record['rsi'] is None or
+                                'cci' not in existing_record or existing_record['cci'] is None
+                            )
+                            should_update = missing_indicators
+                    
+                    if should_update:
                         operations.append(
                             UpdateOne(
                                 {'code': stock_code, 'date': tech_doc['date']},

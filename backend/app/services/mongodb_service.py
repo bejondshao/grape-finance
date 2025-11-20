@@ -488,8 +488,14 @@ class MongoDBService:
                 "cci": {"$exists": True, "$ne": None},
                 "rsi": {"$exists": True, "$ne": None},
                 "macd_line": {"$exists": True, "$ne": None},
+                "macd_signal": {"$exists": True, "$ne": None},
+                "macd_histogram": {"$exists": True, "$ne": None},
                 "kdj_k": {"$exists": True, "$ne": None},
-                "bb_upper": {"$exists": True, "$ne": None}
+                "kdj_d": {"$exists": True, "$ne": None},
+                "kdj_j": {"$exists": True, "$ne": None},
+                "bb_upper": {"$exists": True, "$ne": None},
+                "bb_middle": {"$exists": True, "$ne": None},
+                "bb_lower": {"$exists": True, "$ne": None}
             }
             
             latest = await self.db[collection_name].find_one(
